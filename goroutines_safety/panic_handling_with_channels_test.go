@@ -46,7 +46,7 @@ func mockTask(id int, failOn int) func() {
 			fmt.Printf("[mockTask] Task %d will panic\n", id)
 			panic("Task failed")
 		}
-		time.Sleep(100 * time.Millisecond) // Mock task executing
+		time.Sleep(100 * time.Millisecond) // Mock executing
 		fmt.Printf("[mockTask] Task %d finished executing\n", id)
 	}
 }
