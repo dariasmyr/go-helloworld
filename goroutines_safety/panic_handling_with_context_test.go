@@ -26,20 +26,19 @@ func RunTasksWithContext(ctx context.Context, tasks int, taskFunc func(int, int,
 			defer func() {
 				if r := recover(); r != nil {
 					err := fmt.Errorf("task %d panicked: %v", id, r)
-					fmt.Println("[RunTasksWithChannels] Recovered from panic:", err)
+					fmt.Println("[RunTasksWithContext] Recovered from panic:", err)
 					cancel() // Close all other tasks
 				}
 			}()
 
-			fmt.Printf("[RunTasksWithChannels] Task %d started\n", id)
+			fmt.Printf("[RunTasksWithContext] Task %d started\n", id)
 			taskFunc(id, failOn, ctx)()
-			fmt.Printf("[RunTasksWithChannels] Task %d completed\n", id)
+			fmt.Printf("[RunTasksWithContext] Task %d completed\n", id)
 		}(i)
 	}
 
-	wg.Wait()
-
-	fmt.Println("[RunTasksWithChannels] All tasks completed")
+	wg.Wait() // Wait for all goroutines to finish
+	fmt.Println("[RunTasksWithContext] All tasks completed")
 }
 
 func mockTaskWithContext(id int, failOn int, ctx context.Context) func() {
@@ -66,9 +65,13 @@ func TestRunTasksWithContext(t *testing.T) {
 
 		tasks := 5
 
-		ctx := context.Background()
-
+		ctx := context.Background()                                 // Root context
 		go RunTasksWithContext(ctx, tasks, mockTaskWithContext, -1) // No errors (failOn=-1)
+
+		select {
+		case <-time.After(1 * time.Second):
+			fmt.Println("[TestRunTasksWithContext] Test passed: Timeout occurred, no errors detected")
+		}
 	})
 
 	t.Run("Task panics and propagates error", func(t *testing.T) {
@@ -76,8 +79,12 @@ func TestRunTasksWithContext(t *testing.T) {
 
 		tasks := 5
 
-		ctx := context.Background()
-
+		ctx := context.Background()                                // Root context
 		go RunTasksWithContext(ctx, tasks, mockTaskWithContext, 2) // Panic on task 2
+
+		select {
+		case <-time.After(1 * time.Second):
+			t.Error("[TestRunTasksWithContext] Timeout waiting for error")
+		}
 	})
 }
