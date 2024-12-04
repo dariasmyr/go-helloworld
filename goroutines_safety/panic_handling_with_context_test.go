@@ -67,7 +67,7 @@ func TestRunTasksWithContext(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 		defer cancel()
 
-		err := RunTasksWithContext(ctx, tasks, mockTask, -1)
+		err := RunTasksWithContext(ctx, tasks, MockTask, -1)
 
 		if err != nil {
 			t.Errorf("[TestRunTasksWithContext] Unexpected error: %v", err)
@@ -83,7 +83,7 @@ func TestRunTasksWithContext(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
 
-		err := RunTasksWithContext(ctx, tasks, mockTask, 2)
+		err := RunTasksWithContext(ctx, tasks, MockTask, 2)
 
 		if err == nil {
 			t.Error("[TestRunTasksWithContext] Expected error, got nil")

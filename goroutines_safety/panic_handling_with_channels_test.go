@@ -39,7 +39,7 @@ func RunTasksWithChannels(tasks int, taskFunc func(int, int) func(), errChan cha
 	close(errChan)
 }
 
-func mockTask(id int, failOn int) func() {
+func MockTask(id int, failOn int) func() {
 	return func() {
 		fmt.Printf("[mockTask] Task %d executing\n", id)
 		if id == failOn {
@@ -58,7 +58,7 @@ func TestRunTasksWithChannels(t *testing.T) {
 		tasks := 5
 		errChan := make(chan error, 1)
 
-		go RunTasksWithChannels(tasks, mockTask, errChan, -1) // No errors (failOn=-1)
+		go RunTasksWithChannels(tasks, MockTask, errChan, -1) // No errors (failOn=-1)
 
 		select {
 		case err := <-errChan:
@@ -78,7 +78,7 @@ func TestRunTasksWithChannels(t *testing.T) {
 		tasks := 5
 		errChan := make(chan error, 1)
 
-		go RunTasksWithChannels(tasks, mockTask, errChan, 2) // Panic on task 2
+		go RunTasksWithChannels(tasks, MockTask, errChan, 2) // Panic on task 2
 
 		select {
 		case err := <-errChan:
