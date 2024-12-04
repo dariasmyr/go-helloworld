@@ -64,7 +64,7 @@ func TestRunTasksWithContext(t *testing.T) {
 		fmt.Println("[TestRunTasksWithContext] Starting test: All tasks complete without panic")
 
 		tasks := 5
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 		defer cancel()
 
 		err := RunTasksWithContext(ctx, tasks, mockTask, -1)
