@@ -54,3 +54,12 @@ func worker(ctx context.Context, wg *sync.WaitGroup, jobs <-chan Job, results ch
 
 	}
 }
+
+func New(wcount int) WorkerPool {
+	return WorkerPool{
+		workersCount: wcount,
+		jobs:         make(chan Job, wcount),
+		results:      make(chan Result, wcount),
+		Done:         make(chan struct{}),
+	}
+}
