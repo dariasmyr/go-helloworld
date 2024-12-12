@@ -2,33 +2,31 @@ package data_races
 
 import (
 	"fmt"
-	"time"
 )
 
-type CacheOperation struct {
-	key    string
-	value  int
-	result chan Result
+type CacheOperationAsync struct {
+	key           string
+	value         int
+	operationType string
+	result        chan Result
 }
 
 type Result struct {
 	Key         string
 	Value       int
 	Err         error
-	Description CacheOperation
+	Description CacheOperationAsync
 }
 
 type LimitsCacheCh struct {
-	data    map[string]int
-	readCh  chan CacheOperation
-	writeCh chan CacheOperation
+	data   map[string]int
+	taskCh chan CacheOperationAsync
 }
 
 func NewLimitsCacheCh() *LimitsCacheCh {
 	cache := &LimitsCacheCh{
-		data:    make(map[string]int),
-		readCh:  make(chan CacheOperation),
-		writeCh: make(chan CacheOperation),
+		data:   make(map[string]int),
+		taskCh: make(chan CacheOperationAsync),
 	}
 
 	go cache.processOperation()
@@ -37,25 +35,18 @@ func NewLimitsCacheCh() *LimitsCacheCh {
 }
 
 func (cache *LimitsCacheCh) processOperation() {
-	for {
-		select {
-		case readOp := <-cache.readCh:
-			fmt.Printf("[processOperation] Received read operation: key=%s\n", readOp.key)
-			time.Sleep(100 * time.Millisecond)
-			value, ok := cache.data[readOp.key]
+	for op := range cache.taskCh {
+		switch op.operationType {
+		case "set":
+			cache.data[op.key] = op.value
+			op.result <- Result{Key: op.key, Value: cache.data[op.key]}
+		case "get":
+			value, ok := cache.data[op.key]
 			if !ok {
-				fmt.Printf("[processOperation] Key not found: key=%s\n", readOp.key)
-				readOp.result <- Result{Err: fmt.Errorf("key not found")}
+				op.result <- Result{Err: fmt.Errorf("key not found")}
 			} else {
-				fmt.Printf("[processOperation] Read successful: key=%s, value=%d\n", readOp.key, value)
-				readOp.result <- Result{Key: readOp.key, Value: value}
+				op.result <- Result{Key: op.key, Value: value}
 			}
-		case writeOp := <-cache.writeCh:
-			fmt.Printf("[processOperation] Received write operation: key=%s, value=%d\n", writeOp.key, writeOp.value)
-			time.Sleep(100 * time.Millisecond)
-			cache.data[writeOp.key] = writeOp.value
-			fmt.Printf("[processOperation] Write successful: key=%s, value=%d\n", writeOp.key, writeOp.value)
-			writeOp.result <- Result{Key: writeOp.key, Value: writeOp.value}
 		}
 	}
 }
@@ -63,7 +54,7 @@ func (cache *LimitsCacheCh) processOperation() {
 func (cache *LimitsCacheCh) SetLimit(key string, value int) {
 	fmt.Printf("[SetLimit] Sending write operation: key=%s, value=%d\n", key, value)
 	resultCh := make(chan Result)
-	cache.writeCh <- CacheOperation{key: key, value: value, result: resultCh}
+	cache.taskCh <- CacheOperationAsync{key: key, value: value, result: resultCh, operationType: "set"}
 	result := <-resultCh
 	fmt.Printf("[SetLimit] Write operation completed: key=%s, value=%d\n", result.Key, result.Value)
 }
@@ -71,7 +62,7 @@ func (cache *LimitsCacheCh) SetLimit(key string, value int) {
 func (cache *LimitsCacheCh) GetLimit(key string) (int, error) {
 	fmt.Printf("[GetLimit] Sending read operation: key=%s\n", key)
 	resultCh := make(chan Result)
-	cache.readCh <- CacheOperation{key: key, result: resultCh}
+	cache.taskCh <- CacheOperationAsync{key: key, result: resultCh, operationType: "get"}
 	result := <-resultCh
 	if result.Err != nil {
 		fmt.Printf("[GetLimit] Read operation failed: key=%s, error=%v\n", key, result.Err)
