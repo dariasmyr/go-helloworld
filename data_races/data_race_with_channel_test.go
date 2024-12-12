@@ -23,11 +23,10 @@ func TestAsyncBehavior(t *testing.T) {
 		fmt.Printf("Sending SENT req for key%v: %d\n", sendReq.Key, sendReq.Value)
 		requests <- sendReq
 
-		// // Получаем ответ
-		// resp := <-respChan
-		// if resp.Ok {
-		// 	fmt.Printf("Set limit for key%d: %d\n", i, i*10)
-		// }
+		resp := <-respChan
+		if resp.Ok {
+			fmt.Printf("Set limit for key%d: %d\n", i, i*10)
+		}
 	}
 
 	for i := 0; i < 10; i++ {
@@ -39,13 +38,12 @@ func TestAsyncBehavior(t *testing.T) {
 		}
 		fmt.Printf("Sending GET req for key%v\n", getReq.Key)
 		requests <- getReq
-		// Получаем ответ
-		// resp := <-respChan
-		// if resp.Ok {
-		// 	fmt.Printf("Limit for key%d: %d\n", i, resp.Limit)
-		// } else {
-		// 	fmt.Printf("No limit for key%d\n", i)
-		// }
+		resp := <-respChan
+		if resp.Ok {
+			fmt.Printf("Limit for key%d: %d\n", i, resp.Limit)
+		} else {
+			fmt.Printf("No limit for key%d\n", i)
+		}
 	}
 
 	fmt.Printf("closing req channel")
