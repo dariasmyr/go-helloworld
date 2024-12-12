@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func TestAsyncBehavior(t *testing.T) {
+func TestAsyncBehaviorPool(t *testing.T) {
 	cache := NewLimitsCachePool(2)
 
 	go cache.Run()

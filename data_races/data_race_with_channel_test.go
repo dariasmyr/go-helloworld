@@ -6,7 +6,7 @@ import (
 )
 
 func TestAsyncBehavior(t *testing.T) {
-	cache := NewLimitsCachePool()
+	cache := NewLimitsCacheOneGorourine()
 
 	requests := make(chan Request, 100)
 
