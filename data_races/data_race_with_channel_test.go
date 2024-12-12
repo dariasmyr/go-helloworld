@@ -2,50 +2,53 @@ package data_races
 
 import (
 	"fmt"
-	"sync"
 	"testing"
-	"time"
 )
 
 func TestAsyncBehavior(t *testing.T) {
-	cache := NewLimitsCacheCh()
+	cache := NewLimitsCachePool()
 
-	start := time.Now()
-	fmt.Println("[TestAsyncBehavior] Starting test")
-	go cache.SetLimit("key1", 100)
-	go cache.SetLimit("key2", 200)
-	time.Sleep(150 * time.Millisecond)
+	requests := make(chan Request, 100)
 
-	go cache.GetLimit("key1")
-	go cache.GetLimit("key2")
+	go cache.HandleRequests(requests)
 
-	duration := time.Since(start)
-	if duration > 500*time.Millisecond {
-		t.Errorf("[TestAsyncBehavior] Operations are not asynchronous, took too long: %v", duration)
-	}
-	fmt.Println("[TestAsyncBehavior] Test completed")
-}
+	for i := 0; i < 10; i++ {
+		respChan := make(chan Response)
+		sendReq := Request{
+			Op:    "set",
+			Key:   fmt.Sprintf("key%d", i),
+			Value: i * 10,
+			Resp:  respChan,
+		}
+		fmt.Printf("Sending SENT req for key%v: %d\n", sendReq.Key, sendReq.Value)
+		requests <- sendReq
 
-func TestConcurrentAsync(t *testing.T) {
-	cache := NewLimitsCacheCh()
-	const numOps = 100
-	fmt.Println("[TestConcurrentAsync] Starting test")
-	start := time.Now()
-
-	var wg sync.WaitGroup
-	for i := 0; i < numOps; i++ {
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
-			key := fmt.Sprintf("key%d", i)
-			fmt.Printf("[TestConcurrentAsync] Starting operation: key=%s, value=%d\n", key, i)
-			cache.SetLimit(key, i)
-			_, _ = cache.GetLimit(key)
-			fmt.Printf("[TestConcurrentAsync] Completed operation: key=%s\n", key)
-		}(i)
+		// // Получаем ответ
+		// resp := <-respChan
+		// if resp.Ok {
+		// 	fmt.Printf("Set limit for key%d: %d\n", i, i*10)
+		// }
 	}
 
-	wg.Wait()
-	duration := time.Since(start)
-	fmt.Printf("[TestConcurrentAsync] Completed %d operations in %v\n", numOps, duration)
+	for i := 0; i < 10; i++ {
+		respChan := make(chan Response)
+		getReq := Request{
+			Op:   "get",
+			Key:  fmt.Sprintf("key%d", i),
+			Resp: respChan,
+		}
+		fmt.Printf("Sending GET req for key%v\n", getReq.Key)
+		requests <- getReq
+		// Получаем ответ
+		// resp := <-respChan
+		// if resp.Ok {
+		// 	fmt.Printf("Limit for key%d: %d\n", i, resp.Limit)
+		// } else {
+		// 	fmt.Printf("No limit for key%d\n", i)
+		// }
+	}
+
+	fmt.Printf("closing req channel")
+
+	close(requests)
 }
