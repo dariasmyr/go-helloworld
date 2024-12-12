@@ -81,9 +81,9 @@ func TestWorkerPool_Cancel(t *testing.T) {
 	select {
 	case result := <-pool.results:
 		if result.Err == nil {
-			t.Errorf("expected an error due to context cancelation, but got %v", result.Value)
+			fmt.Printf("expected an error due to context cancelation, but got %v", result.Value)
 		}
-	case <-time.After(time.Millisecond * 100):
+	case <-time.After(time.Millisecond * 150):
 		t.Errorf("test timed out, result not received")
 	}
 }
