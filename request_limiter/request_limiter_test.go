@@ -1,6 +1,7 @@
 package requestlimiter
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"sync"
@@ -55,6 +56,34 @@ func (s *Service) HandleAllRequests(process func(), u *User) bool {
 	}
 }
 
+func (s *Service) HandleAllRequestsWithContext(process func(ctx context.Context), u *User) bool {
+	done := make(chan bool)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*time.Duration(s.LimitSec))
+	defer cancel()
+
+	go func() {
+		process(ctx)
+		close(done)
+	}()
+
+	fmt.Printf("Started handling requests for user: %s\n", u.ID)
+
+	for {
+		select {
+		case <-done:
+			fmt.Printf("Process func has been done for user: %s\n", u.ID)
+			return true
+		case <-ctx.Done():
+			fmt.Printf("User %s, limit: %d seconds\n", u.ID, s.LimitSec)
+
+			if !u.IsPremium {
+				fmt.Printf("Time limit of %v seconds exceeded for user: %s, error: %v\n", s.LimitSec, u.ID, ctx.Err())
+				return false
+			}
+		}
+	}
+}
+
 func (s *Service) HandleRequest(process func(), u *User) bool {
 	done := make(chan bool)
 
@@ -88,6 +117,23 @@ func sampleProcess(seconds int) {
 	log.Printf("Process finished after: %v", time.Since(start))
 }
 
+func sampleProcessWithContext(ctx context.Context, seconds int) {
+	start := time.Now()
+
+	for i := 0; i < seconds; i++ {
+
+		select {
+		case <-time.After(1 * time.Second):
+			log.Printf("Working... %d second(s)", i+1)
+		case <-ctx.Done():
+			log.Printf("Process cancelled after: %v, reason: %v", time.Since(start), ctx.Err())
+			return
+		}
+	}
+
+	log.Printf("Process finished successfully after: %v", time.Since(start))
+}
+
 func TestHandlingAllRequests(t *testing.T) {
 	t.Run(t.Name(), func(t *testing.T) {
 		service := &Service{
@@ -104,6 +150,35 @@ func TestHandlingAllRequests(t *testing.T) {
 			successful := service.HandleAllRequests(func() { sampleProcess(2) }, user)
 			log.Printf("Finished short process %v with success: %v, user premium: %v \n", i, successful, user.IsPremium)
 		}
+	})
+}
+
+func TestHandlingAllRequestsWithContext(t *testing.T) {
+	t.Run(t.Name(), func(t *testing.T) {
+		service := &Service{
+			LimitSec: 3,
+		}
+
+		user := &User{
+			ID:        uuid.NewString(),
+			IsPremium: false,
+		}
+
+		t.Run("Process respects context timeout", func(t *testing.T) {
+			successful := service.HandleAllRequestsWithContext(
+				func(ctx context.Context) { sampleProcessWithContext(ctx, 5) },
+				user,
+			)
+			log.Printf("Process finished with success: %v", successful)
+		})
+
+		t.Run("Process completes within timeout", func(t *testing.T) {
+			successful := service.HandleAllRequestsWithContext(
+				func(ctx context.Context) { sampleProcessWithContext(ctx, 2) },
+				user,
+			)
+			log.Printf("Process finished with success: %v", successful)
+		})
 	})
 }
 
