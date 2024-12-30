@@ -56,6 +56,7 @@ func (s *Service) HandleAllRequests(process func(), u *User) bool {
 	}
 }
 
+// Context cancel should not allow to execute process() function correctly even for premium users
 func (s *Service) HandleAllRequestsWithContext(process func(ctx context.Context), u *User) bool {
 	done := make(chan bool)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*time.Duration(s.LimitSec))
