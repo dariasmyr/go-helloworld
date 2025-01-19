@@ -1,6 +1,9 @@
-package main
+package sort
 
-import "fmt"
+import (
+	"fmt"
+	"testing"
+)
 
 func quickSort(arr []string) []string {
 	if len(arr) <= 1 {
@@ -35,10 +38,14 @@ func quickSort(arr []string) []string {
 	return append(append(sortedLeft, pivot), sortedRight...)
 }
 
-func main() {
+func testSort() {
 	arr := []string{"o", "a", "b", "g", "k"}
 	fmt.Println("Arr", arr)
 
 	sortedArr := quickSort(arr)
 	fmt.Println("sortedArr", sortedArr)
+}
+
+func TestQuickSort(t *testing.T) {
+	testSort()
 }
