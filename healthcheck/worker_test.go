@@ -1,10 +1,11 @@
-package main
+package healthcheck
 
 import (
 	"context"
 	"fmt"
 	"net/http"
 	"sync"
+	"testing"
 )
 
 type Response struct {
@@ -14,7 +15,7 @@ type Response struct {
 
 var count int
 
-func main() {
+func testWithWorker() {
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	numWorkers := 5
@@ -78,4 +79,8 @@ func main() {
 
 	wg.Wait()
 	close(resChan)
+}
+
+func TestHealthCheckWithPool(t *testing.T) {
+	testWithWorker()
 }
