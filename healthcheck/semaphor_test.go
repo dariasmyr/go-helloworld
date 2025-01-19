@@ -34,10 +34,10 @@ func testWithSemaphor() {
 			} else {
 				fmt.Println(url, "is ok")
 			}
-			<-sema
 		}(url)
 	}
 	wg.Wait()
+	close(sema)
 }
 
 func TestSemaphor(t *testing.T) {
