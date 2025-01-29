@@ -5,30 +5,29 @@ import (
 	"testing"
 )
 
-func findSubstring(s, sub string) bool {
+func findSubstring(s, sub string) int {
 	n := len(s)
 	m := len(sub)
+	result := 0
 
-	if m == 0 {
-		return true
+	if m == 0 || m > n {
+		return result
 	}
 
-	if m > n {
-		return false
-	}
-
-	for i := 0; i <= n-m; i++ {
+	for i := 0; i <= n-m; {
 		fmt.Printf("Processing %s\n", s[i:i+m])
 		if s[i:i+m] == sub {
-			return true
+			result++
+			i += m
+		} else {
+			i++
 		}
 	}
 
-	return false
+	return result
 }
 
 func TestFindSubstring(t *testing.T) {
-	substringFound := findSubstring("ofdgadfgagfafgafgofdgadfgagfafgafgofdgadfgagfafgafg", "gafg")
-
-	fmt.Println("substringFound", substringFound)
+	substringCount := findSubstring("gafggafggafggafg", "fg")
+	fmt.Println("substringCount:", substringCount)
 }
