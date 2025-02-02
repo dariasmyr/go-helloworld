@@ -47,7 +47,7 @@ func getDataWithGenericsOnly[T any](data struct{ Data []T }) []T {
 	return data.Data
 }
 
-func TestReflect(t *testing.T) {
+func Test(t *testing.T) {
 
 	data1 := data1{Data: []int{1, 2, 3}}
 	fmt.Println("data1:", getDataWithReflectOnly(data1))
