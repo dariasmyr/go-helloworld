@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"runtime"
+	"sync"
 	"weak"
 )
 
@@ -49,7 +50,61 @@ func testGC() {
 
 }
 
+// Cache test case
+type CacheValue interface {
+	string | int
+}
+
+type CacheData[T CacheValue] struct {
+	ID    int
+	Value T
+}
+
+type Cache[T CacheValue] struct {
+	mu    sync.Mutex
+	items map[int]weak.Pointer[CacheData[T]]
+}
+
+func (c *Cache[T]) Add(id int, data *CacheData[T]) {
+	weakPointer := weak.Make(data)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.items[id] = weakPointer
+}
+
+func (c *Cache[T]) Get(id int) *CacheData[T] {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if weakPoiner, exists := c.items[id]; exists {
+		return weakPoiner.Value() // Return strong pointer (*Data)
+	}
+	return nil
+}
+
+func testCache() {
+	cache := &Cache[string]{items: make(map[int]weak.Pointer[CacheData[string]])}
+
+	data1 := &CacheData[string]{ID: 1, Value: "Object 1"}
+
+	cache.Add(1, data1)
+
+	fmt.Printf("Cache 1 before GC: %+v\n", cache.Get(1))
+
+	// Initally i wanted to create a cache map where i could store both string and int values (CacheValue common type interface), but as it is restricted for methosa (in my exampe Add and Set) to have type parameters (as i wanted leave type Cache strunf without [T Cache Value] and make Add[T CacheValue] and Set[T CacheValue]). Unf it is allowed only for structures (in my example type Cache struct) to have type params. So i can create onle cache map for strings ONLY or ints ONLY)
+	// data2 := &CacheData[int]{ID: 2, Value: 123}
+
+	// cache.Add(2, data2)
+
+	// fmt.Printf("Cache 2 before GC: %+v\n", cache.Get(2))
+
+	// Call GC manually
+	runtime.GC()
+
+	fmt.Printf("Cache after GC: %+v\n", cache.Get(1))
+}
+
 func main() {
 	testBasic()
 	testGC()
+	testCache()
 }
