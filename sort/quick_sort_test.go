@@ -41,7 +41,7 @@ func quickSort(arr []string) []string {
 
 func topKFrequent(words []string, k int) []string {
 
-	sortedArray := quickSort(words)
+	sortedArray := quickSortStr(words)
 
 	fmt.Printf("SortedArray: %v\n", sortedArray)
 
@@ -65,8 +65,14 @@ func topKFrequent(words []string, k int) []string {
 	}
 
 	sort.Slice(wordList, func(i, j int) bool {
-		return wordList[i].count > wordList[j].count
+		if wordList[i].count == wordList[j].count {
+			return wordList[i].word < wordList[j].word
+		} else {
+			return wordList[i].count > wordList[j].count
+		}
 	})
+
+	fmt.Printf("wordList: %v", wordList)
 
 	result := make([]string, 0, k)
 	for i := 0; i < k; i++ {
@@ -75,7 +81,6 @@ func topKFrequent(words []string, k int) []string {
 
 	return result
 }
-
 func quickSortStr(words []string) []string {
 	if len(words) == 0 {
 		return words
