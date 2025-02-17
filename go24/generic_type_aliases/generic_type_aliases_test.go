@@ -1,6 +1,9 @@
-package main
+package go24
 
-import "fmt"
+import (
+	"fmt"
+	"testing"
+)
 
 type StringAlias = string
 
@@ -23,12 +26,14 @@ func NewBox[T AllowedTypes](value T) {
 	fmt.Println("Box value:", value)
 }
 
-func main() {
-	NewBox("Hello Go")
+func testAliases(t *testing.T) {
+	t.Run("Test pipeline success", func(t *testing.T) {
+		NewBox("Hello Go")
 
-	NewBox(map[string]bool{"a": true, "b": false})
+		NewBox(map[string]bool{"a": true, "b": false})
 
-	NewBox(3)
+		NewBox(3)
 
-	//NewBox(true) не пройдет, так как не bool does not satisfy AllowedTypes
+		//NewBox(true) не пройдет, так как не bool does not satisfy AllowedTypes
+	})
 }
