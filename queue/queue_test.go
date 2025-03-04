@@ -1,6 +1,8 @@
 package queue
 
 import (
+	"fmt"
+	"runtime"
 	"sync"
 	"testing"
 )
@@ -75,6 +77,41 @@ func TestQueueHighLoadAddAndPio(t *testing.T) {
 		go func() {
 			q.Pop()
 			wg.Done()
+		}()
+	}
+
+	wg.Wait()
+
+	if !q.IsEmpty() {
+		t.Errorf("Expected queue to be empty, but it's not")
+	}
+}
+
+func TestQueueWithLimitProcessors(t *testing.T) {
+	q := NewQueue[int]()
+	numTasks := 1000000
+	maxProcCount := 5
+
+	for i := 0; i < numTasks; i++ {
+		q.Add(i)
+	}
+
+	var wg sync.WaitGroup
+	maxActiveWorkers := 10
+
+	runtime.GOMAXPROCS(maxProcCount)
+
+	for i := 0; i < maxActiveWorkers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				if q.IsEmpty() {
+					break
+				}
+				val, _ := q.Pop()
+				fmt.Printf("Processing %d\n", val)
+			}
 		}()
 	}
 
