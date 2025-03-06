@@ -26,7 +26,7 @@ func NewBox[T AllowedTypes](value T) {
 	fmt.Println("Box value:", value)
 }
 
-func testAliases(t *testing.T) {
+func TestAliases(t *testing.T) {
 	t.Run("Test pipeline success", func(t *testing.T) {
 		NewBox("Hello Go")
 

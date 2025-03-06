@@ -13,7 +13,7 @@ type Data struct {
 	Name string
 }
 
-func testBasic(t *testing.T) {
+func TestBasic(t *testing.T) {
 	t.Run("Test Basic", func(t *testing.T) {
 		var x int = 42
 		weakPointer := weak.Make(&x)
@@ -28,7 +28,7 @@ func testBasic(t *testing.T) {
 	})
 }
 
-func testGC(t *testing.T) {
+func TestGC(t *testing.T) {
 	t.Run("Test GC", func(t *testing.T) {
 		x := &Data{ID: 1, Name: "Dasha"}
 
@@ -86,7 +86,7 @@ func (c *Cache[T]) Get(id int) *CacheData[T] {
 	return nil
 }
 
-func testCache(t *testing.T) {
+func TestCache(t *testing.T) {
 	t.Run("Test Cache", func(t *testing.T) {
 		cache := &Cache[string]{items: make(map[int]weak.Pointer[CacheData[string]])}
 
