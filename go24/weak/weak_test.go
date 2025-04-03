@@ -66,8 +66,9 @@ type CacheData[T CacheValue] struct {
 }
 
 type Cache[T CacheValue] struct {
-	mu    sync.Mutex
-	items map[int]weak.Pointer[CacheData[T]]
+	mu        sync.Mutex
+	items     map[int]weak.Pointer[CacheData[T]]
+	itemsWeak map[weak.Pointer[CacheData[T]]]*CacheData[T]
 }
 
 func (c *Cache[T]) Add(id int, data *CacheData[T]) {
@@ -77,6 +78,14 @@ func (c *Cache[T]) Add(id int, data *CacheData[T]) {
 	c.items[id] = weakPointer
 }
 
+func (c *Cache[T]) AddWeakKey(data *CacheData[T]) weak.Pointer[CacheData[T]] {
+	weakPointer := weak.Make(data)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.itemsWeak[weakPointer] = data
+	return weakPointer
+}
+
 func (c *Cache[T]) Get(id int) *CacheData[T] {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -84,6 +93,20 @@ func (c *Cache[T]) Get(id int) *CacheData[T] {
 		return weakPoiner.Value() // Return strong pointer (*Data)
 	}
 	return nil
+}
+
+func (c *Cache[T]) GetCacheByWeakPointer(weakPtr weak.Pointer[CacheData[T]]) *CacheData[T] {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if data, exists := c.itemsWeak[weakPtr]; exists {
+		return data // Return *CacheData pointer
+	}
+	return nil
+}
+
+type Node struct {
+	Name string
+	Next *Node
 }
 
 func TestCache(t *testing.T) {
@@ -96,17 +119,57 @@ func TestCache(t *testing.T) {
 
 		fmt.Printf("Cache 1 before GC: %+v\n", cache.Get(1))
 
-		// Initally i wanted to create a cache map where i could store both string and int values (CacheValue common type interface), but as it is restricted for methosa (in my exampe Add and Set) to have type parameters (as i wanted leave type Cache strunf without [T Cache Value] and make Add[T CacheValue] and Set[T CacheValue]). Unf it is allowed only for structures (in my example type Cache struct) to have type params. So i can create onle cache map for strings ONLY or ints ONLY)
-		// data2 := &CacheData[int]{ID: 2, Value: 123}
-
-		// cache.Add(2, data2)
-
-		// fmt.Printf("Cache 2 before GC: %+v\n", cache.Get(2))
-
 		// Call GC manually
 		runtime.GC()
 
 		fmt.Printf("Cache after GC: %+v\n", cache.Get(1))
-		// fmt.Printf("Cache after GC: %+v\n", cache.Get(2))
+	})
+
+	t.Run("Test Cache Map", func(t *testing.T) {
+		cache := &Cache[string]{itemsWeak: make(map[weak.Pointer[CacheData[string]]]*CacheData[string])}
+
+		data1 := &CacheData[string]{ID: 1, Value: "Object 1"}
+
+		weakKey := cache.AddWeakKey(data1)
+
+		fmt.Printf("Weak Pointer to Cache 1 before GC: %+v\n", weakKey)
+		fmt.Printf("Cache 1 before GC: %+v\n", cache.GetCacheByWeakPointer(weakKey))
+
+		runtime.GC()
+
+		fmt.Printf("weakKey after GC: %+v\n", weakKey)
+		fmt.Printf("Cache 1 after GC: %+v\n", cache.GetCacheByWeakPointer(weakKey))
+	})
+
+	t.Run("Test Weak Circular Pointers", func(t *testing.T) {
+		node1 := &Node{Name: "Node 1"}
+		node2 := &Node{Name: "Node 2"}
+
+		// Circular pointer: node1 refer to node2 and vice versa
+		node1.Next = node2
+		node2.Next = node1
+
+		weakNode1 := weak.Make(&node1)
+		weakNode2 := weak.Make(&node2)
+
+		// Setting links to weak pointers
+		// At the same time, the garbage collector can delete node1 and node2 when there are no more strong references to them.
+		fmt.Printf("Before GC, weakNode1: %+v, weakNode2: %+v\n", weakNode1.Value(), weakNode2.Value())
+
+		runtime.GC()
+
+		// After garbage collection, we see that references to node1 and node2 objects can be released,
+		// since they are now controlled by a weak pointer rather than a strong reference
+		if weakNode1.Value() == nil {
+			fmt.Println("weakNode1 was collected by GC")
+		} else {
+			fmt.Println("weakNode1 is still alive")
+		}
+
+		if weakNode2.Value() == nil {
+			fmt.Println("weakNode2 was collected by GC")
+		} else {
+			fmt.Println("weakNode2 is still alive")
+		}
 	})
 }
