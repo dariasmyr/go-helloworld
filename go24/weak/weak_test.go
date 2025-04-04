@@ -82,6 +82,7 @@ func (c *Cache[T]) AddWeakKey(data *CacheData[T]) weak.Pointer[CacheData[T]] {
 	weakPointer := weak.Make(data)
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	// Strong pointer to data struct is added to map value, so data struct will not be collected by GC
 	c.itemsWeak[weakPointer] = data
 	return weakPointer
 }
@@ -132,12 +133,13 @@ func TestCache(t *testing.T) {
 
 		weakKey := cache.AddWeakKey(data1)
 
-		fmt.Printf("Weak Pointer to Cache 1 before GC: %+v\n", weakKey)
+		fmt.Printf("Weak Pointer to Cache 1 before GC: %+v\n", weakKey.Value())
 		fmt.Printf("Cache 1 before GC: %+v\n", cache.GetCacheByWeakPointer(weakKey))
 
 		runtime.GC()
 
-		fmt.Printf("weakKey after GC: %+v\n", weakKey)
+		// Returns not nill as data strong pointer refers to data in map value
+		fmt.Printf("weakKey after GC: %+v\n", weakKey.Value())
 		fmt.Printf("Cache 1 after GC: %+v\n", cache.GetCacheByWeakPointer(weakKey))
 	})
 
