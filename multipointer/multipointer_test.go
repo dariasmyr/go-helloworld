@@ -134,7 +134,7 @@ func smallestRange(nums [][]int) []int {
 		minElement := heap.Pop(h).(Element)
 		currMin := minElement.val
 
-		if currMax-currMax < bestEnd-bestStart {
+		if currMax-currMin < bestEnd-bestStart {
 			bestStart, bestEnd = currMin, currMax
 		}
 
