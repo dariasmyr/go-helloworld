@@ -19,16 +19,16 @@ var count int
 func testWithWorker() {
 	var wg sync.WaitGroup
 	var mu sync.Mutex
-	numWorkers := 5
+	numWorkers := 2
 	var urlChan = make(chan string)
 	var resChan = make(chan Response)
 	urls := []string{
+		"http://localhost:8084",
+		"http://localhost:8081",
 		"https://google.com",
 		"https://github.com",
 		"https://stackoverflow.com",
 		"https://facebook.com",
-		"http://localhost:8080",
-		"http://localhost:8081",
 	}
 
 	var ctx, cancel = context.WithCancel(context.Background())
@@ -45,31 +45,33 @@ func testWithWorker() {
 		wg.Add(1)
 		go func(workerId int) {
 			defer wg.Done()
-			select {
-			case <-ctx.Done():
-				return
-			case url, ok := <-urlChan:
-				if !ok {
+			for {
+				select {
+				case <-ctx.Done():
 					return
-				}
-				{
-					resCtx, cancelReq := context.WithTimeout(ctx, 5*time.Second)
-					defer cancelReq()
-					select {
-					case <-resCtx.Done():
-						fmt.Println("Response context cancelled")
-						resChan <- Response{url: url, status: "500"}
+				case url, ok := <-urlChan:
+					if !ok {
 						return
-					default:
-						res, err := http.Get(url)
-						if ctx.Err() != nil {
-							return
-						}
-						if err != nil || res.StatusCode != 200 {
-							fmt.Println(url, "is not ok")
+					}
+					{
+						resCtx, cancelReq := context.WithTimeout(ctx, 5*time.Second)
+						defer cancelReq()
+						select {
+						case <-resCtx.Done():
+							fmt.Println("Response context cancelled")
 							resChan <- Response{url: url, status: "500"}
-						} else {
-							resChan <- Response{url: url, status: "200"}
+							return
+						default:
+							res, err := http.Get(url)
+							if ctx.Err() != nil {
+								return
+							}
+							if err != nil || res.StatusCode != 200 {
+								fmt.Println(url, "is not ok")
+								resChan <- Response{url: url, status: "500"}
+							} else {
+								resChan <- Response{url: url, status: "200"}
+							}
 						}
 					}
 				}
@@ -91,6 +93,7 @@ func testWithWorker() {
 		}
 		if count == 2 {
 			cancel()
+			break
 		}
 	}
 }
