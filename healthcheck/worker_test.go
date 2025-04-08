@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"sync"
 	"testing"
+	"time"
 )
 
 type Response struct {
@@ -47,22 +48,39 @@ func testWithWorker() {
 			select {
 			case <-ctx.Done():
 				return
-			default:
-				for url := range urlChan {
-					res, err := http.Get(url)
-					if ctx.Err() != nil {
-						return
-					}
-					if err != nil || res.StatusCode != 200 {
-						fmt.Println(url, "is not ok")
+			case url, ok := <-urlChan:
+				if !ok {
+					return
+				}
+				{
+					resCtx, cancelReq := context.WithTimeout(ctx, 5*time.Second)
+					defer cancelReq()
+					select {
+					case <-resCtx.Done():
+						fmt.Println("Response context cancelled")
 						resChan <- Response{url: url, status: "500"}
-					} else {
-						resChan <- Response{url: url, status: "200"}
+						return
+					default:
+						res, err := http.Get(url)
+						if ctx.Err() != nil {
+							return
+						}
+						if err != nil || res.StatusCode != 200 {
+							fmt.Println(url, "is not ok")
+							resChan <- Response{url: url, status: "500"}
+						} else {
+							resChan <- Response{url: url, status: "200"}
+						}
 					}
 				}
 			}
 		}(worker)
 	}
+
+	go func() {
+		wg.Wait()
+		close(resChan)
+	}()
 
 	for res := range resChan {
 		if res.status == "200" {
@@ -73,12 +91,8 @@ func testWithWorker() {
 		}
 		if count == 2 {
 			cancel()
-			break
 		}
 	}
-
-	wg.Wait()
-	close(resChan)
 }
 
 func TestHealthCheckWithPool(t *testing.T) {
