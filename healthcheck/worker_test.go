@@ -53,27 +53,7 @@ func testWithWorker() {
 					if !ok {
 						return
 					}
-					{
-						resCtx, cancelReq := context.WithTimeout(ctx, 5*time.Second)
-						defer cancelReq()
-						select {
-						case <-resCtx.Done():
-							fmt.Println("Response context cancelled")
-							resChan <- Response{url: url, status: "500"}
-							return
-						default:
-							res, err := http.Get(url)
-							if ctx.Err() != nil {
-								return
-							}
-							if err != nil || res.StatusCode != 200 {
-								fmt.Println(url, "is not ok")
-								resChan <- Response{url: url, status: "500"}
-							} else {
-								resChan <- Response{url: url, status: "200"}
-							}
-						}
-					}
+					processRequest(ctx, url, resChan)
 				}
 			}
 		}(worker)
@@ -94,6 +74,24 @@ func testWithWorker() {
 		if count == 2 {
 			cancel()
 			break
+		}
+	}
+}
+
+func processRequest(ctx context.Context, url string, resChan chan<- Response) {
+	resCtx, cancelReq := context.WithTimeout(ctx, 5*time.Second)
+	defer cancelReq()
+	select {
+	case <-resCtx.Done():
+		fmt.Println("Response context cancelled")
+		resChan <- Response{url: url, status: "500"}
+	default:
+		res, err := http.Get(url)
+		if err != nil || res.StatusCode != 200 {
+			fmt.Println(url, "is not ok")
+			resChan <- Response{url: url, status: "500"}
+		} else {
+			resChan <- Response{url: url, status: "200"}
 		}
 	}
 }
