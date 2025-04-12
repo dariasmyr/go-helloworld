@@ -19,20 +19,28 @@ var count int
 func testWithWorker() {
 	var wg sync.WaitGroup
 	var mu sync.Mutex
-	numWorkers := 2
-	var urlChan = make(chan string)
-	var resChan = make(chan Response)
-	urls := []string{
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	urlChan := make(chan string)
+	resChan := make(chan Response)
+
+	urls := make([]string, 5)
+
+	ulrsToAdd := []string{
 		"http://localhost:8084",
 		"http://localhost:8081",
 		"https://google.com",
 		"https://github.com",
 		"https://stackoverflow.com",
-		"https://facebook.com",
+		"https://facebook.com"}
+
+	for i, _ := range urls {
+		urls[i] = ulrsToAdd[i]
 	}
 
-	var ctx, cancel = context.WithCancel(context.Background())
-	defer cancel()
+	workersCount := 5
 
 	go func() {
 		for _, url := range urls {
@@ -41,22 +49,17 @@ func testWithWorker() {
 		close(urlChan)
 	}()
 
-	for worker := 0; worker < numWorkers; worker++ {
+	for i := 0; i < workersCount; i++ {
 		wg.Add(1)
-		go func(workerId int) {
+		go func() {
 			defer wg.Done()
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case url, ok := <-urlChan:
-					if !ok {
-						return
-					}
-					processRequest(ctx, url, resChan)
-				}
+			select {
+			case <-ctx.Done():
+				fmt.Println("context cancelled, don't start the task")
+			case url := <-urlChan:
+				processUrl(ctx, url, resChan)
 			}
-		}(worker)
+		}()
 	}
 
 	go func() {
@@ -67,9 +70,9 @@ func testWithWorker() {
 	for res := range resChan {
 		if res.status == "200" {
 			mu.Lock()
+			fmt.Println("Successfully received a response 200 from url ", res.url)
 			count++
 			mu.Unlock()
-			fmt.Println(res.url, "is ok")
 		}
 		if count == 2 {
 			cancel()
@@ -78,20 +81,28 @@ func testWithWorker() {
 	}
 }
 
-func processRequest(ctx context.Context, url string, resChan chan<- Response) {
-	resCtx, cancelReq := context.WithTimeout(ctx, 5*time.Second)
+func processUrl(ctx context.Context, url string, resChan chan Response) {
+	reqCtx, cancelReq := context.WithTimeout(ctx, 2*time.Second)
 	defer cancelReq()
-	select {
-	case <-resCtx.Done():
-		fmt.Println("Response context cancelled")
-		resChan <- Response{url: url, status: "500"}
-	default:
-		res, err := http.Get(url)
-		if err != nil || res.StatusCode != 200 {
-			fmt.Println(url, "is not ok")
-			resChan <- Response{url: url, status: "500"}
+
+	req, err := http.NewRequestWithContext(reqCtx, "GET", url, nil)
+	if err != nil {
+		fmt.Println("could not create request", err)
+		resChan <- Response{url, "500"}
+	}
+
+	// Instead of creatinq request with http.NewRequestWithContext and executing it with http.DefaultClient.Do we can just use res, err := http.Get(url), but it will not include context
+	res, err := http.DefaultClient.Do(req)
+	if err != nil || res == nil {
+		fmt.Println("could not send request", err)
+		resChan <- Response{url, "500"}
+		return
+	} else {
+		defer res.Body.Close()
+		if res.StatusCode != 200 {
+			resChan <- Response{url, "500"}
 		} else {
-			resChan <- Response{url: url, status: "200"}
+			resChan <- Response{url, "200"}
 		}
 	}
 }
