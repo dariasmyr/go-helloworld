@@ -53,6 +53,7 @@ func runQueueChannel(cap int) error {
 type Node struct {
 	value int
 	next  *Node
+	prev  *Node
 }
 
 type SimpleQueue struct {
@@ -72,6 +73,7 @@ func (q *SimpleQueue) Push(value int) {
 		q.Last = n
 	} else {
 		q.Last.next = n
+		n.prev = q.Last
 		q.Last = n
 	}
 }
@@ -86,6 +88,12 @@ func (q *SimpleQueue) Pop() (int, error) {
 
 	result := q.First.value
 	q.First = q.First.next
+
+	if q.First != nil {
+		q.First.prev = nil
+	} else {
+		q.Last = nil
+	}
 
 	return result, nil
 }
