@@ -11,7 +11,7 @@ import (
 // RunTasksWithContext runs multiple tasks in parallel using context for cancellation.
 // If one of the tasks causes a panic, it is processed with recover() and added to the context error.
 // tasks - the number of tasks, taskFunc - a function to perform, failOn - the number of a task that causes panic.
-func RunTasksWithContext(ctx context.Context, tasks int, taskFunc func(int, int) func(), failOn int) error {
+func RunTasksWithContext(ctx context.Context, tasks int, taskFunc func(context.Context, int, int) func(), failOn int) error {
 	fmt.Println("[RunTasksWithContext] Starting tasks...")
 
 	var wg sync.WaitGroup
@@ -24,12 +24,12 @@ func RunTasksWithContext(ctx context.Context, tasks int, taskFunc func(int, int)
 	wg.Add(tasks)
 
 	for i := 0; i < tasks; i++ {
-		go func(id int) {
+		go func(i int) {
 			defer wg.Done()
 			defer func() {
 				if r := recover(); r != nil {
 					mu.Lock()
-					err = fmt.Errorf("task %d panicked: %v", id, r)
+					err = fmt.Errorf("task %d panicked: %v", i, r)
 					mu.Unlock()
 
 					cancel()
@@ -39,13 +39,11 @@ func RunTasksWithContext(ctx context.Context, tasks int, taskFunc func(int, int)
 
 			select {
 			case <-ctx.Done():
+				fmt.Println("[RunTasksWithContext] Context is done, do not start task: ", i)
 				return
 			default:
+				taskFunc(ctx, i, failOn)()
 			}
-
-			fmt.Printf("[RunTasksWithContext] Task %d started\n", id)
-			taskFunc(id, failOn)()
-			fmt.Printf("[RunTasksWithContext] Task %d completed\n", id)
 		}(i)
 	}
 
@@ -79,7 +77,7 @@ func TestRunTasksWithContext(t *testing.T) {
 	t.Run("Task panics and propagates error", func(t *testing.T) {
 		fmt.Println("[TestRunTasksWithContext] Starting test: Task panics and propagates error")
 
-		tasks := 5
+		tasks := 10
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
 

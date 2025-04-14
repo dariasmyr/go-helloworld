@@ -1,6 +1,7 @@
 package goroutines_safety
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"testing"
@@ -10,26 +11,39 @@ import (
 // RunTasksWithChannels runs multiple tasks in parallel.
 // If one of the tasks causes a panic, it is processed with recover() and passed to errChan.
 // tasks - the number of tasks, taskFunc - a function to perform, errChan - a channel for errors, failOn - the number of a task that causes panic.
-func RunTasksWithChannels(tasks int, taskFunc func(int, int) func(), errChan chan error, failOn int) {
+func RunTasksWithChannels(tasks int, taskFunc func(int, int) func(), errChan chan error, failOn int) error {
 	fmt.Println("[RunTasksWithChannels] Starting tasks...")
 
 	var wg sync.WaitGroup
-	wg.Add(tasks)
 
+	var err error
+
+	go func(errChan chan error, e *error) {
+		for {
+			select {
+			case err := <-errChan:
+				if err != nil {
+					*e = err
+				}
+			}
+		}
+	}(errChan, &err)
+
+	wg.Add(tasks)
 	for i := 0; i < tasks; i++ {
-		go func(id int) {
+		go func(i int) {
 			defer wg.Done()
 			defer func() {
 				if r := recover(); r != nil {
-					err := fmt.Errorf("task %d panicked: %v", id, r)
-					fmt.Println("[RunTasksWithChannels] Recovered from panic:", err)
-					errChan <- err
+					panicError := fmt.Errorf("task %d panicked: %v", i, r)
+					fmt.Println("[RunTasksWithChannels] Recovered from panic:", panicError)
+					errChan <- panicError
 				}
 			}()
 
-			fmt.Printf("[RunTasksWithChannels] Task %d started\n", id)
-			taskFunc(id, failOn)()
-			fmt.Printf("[RunTasksWithChannels] Task %d completed\n", id)
+			if err == nil {
+				taskFunc(i, failOn)()
+			}
 		}(i)
 	}
 
@@ -37,17 +51,38 @@ func RunTasksWithChannels(tasks int, taskFunc func(int, int) func(), errChan cha
 
 	fmt.Println("[RunTasksWithChannels] All tasks completed. Closing error channel.")
 	close(errChan)
+	return err
 }
 
-func MockTask(id int, failOn int) func() {
+func MockTask(ctx context.Context, id int, failOn int) func() {
 	return func() {
-		fmt.Printf("[mockTask] Task %d executing\n", id)
-		if id == failOn {
-			fmt.Printf("[mockTask] Task %d will panic\n", id)
-			panic("Task failed")
+		select {
+		case <-ctx.Done():
+			fmt.Println("[MockTask] Context is done, do not continue executing task ", id)
+			return
+		default:
+			fmt.Printf("[mockTask] Task %d start executing\n", id)
+			if id == failOn {
+				fmt.Printf("[mockTask] Task %d will panic\n", id)
+				panic("Task failed")
+			} else {
+				time.Sleep(100 * time.Millisecond) // Mock executing
+				fmt.Printf("[mockTask] Task %d finished executing\n", id)
+			}
 		}
-		time.Sleep(100 * time.Millisecond) // Mock executing
-		fmt.Printf("[mockTask] Task %d finished executing\n", id)
+	}
+}
+
+func MockTaskForChannels(id int, failOn int) func() {
+	return func() {
+		fmt.Printf("[mockTaskForChannels] Task %d start executing\n", id)
+		if id == failOn {
+			fmt.Printf("[mockTaskForChannels] Task %d will panic\n", id)
+			panic("Task failed")
+		} else {
+			time.Sleep(100 * time.Millisecond)
+			fmt.Printf("[mockTaskForChannels] Task %d finished executing\n", id)
+		}
 	}
 }
 
@@ -58,18 +93,14 @@ func TestRunTasksWithChannels(t *testing.T) {
 		tasks := 5
 		errChan := make(chan error, 1)
 
-		go RunTasksWithChannels(tasks, MockTask, errChan, -1) // No errors (failOn=-1)
+		err := RunTasksWithChannels(tasks, MockTaskForChannels, errChan, -1) // No errors (failOn=-1)
 
-		select {
-		case err := <-errChan:
-			if err != nil {
-				t.Errorf("[TestRunTasksWithChannels] Unexpected error: %v", err)
-			} else {
-				fmt.Println("[TestRunTasksWithChannels] Test passed: No errors")
-			}
-		case <-time.After(1 * time.Second):
-			fmt.Println("[TestRunTasksWithChannels] Test passed: Timeout occurred, no errors detected")
+		if err != nil {
+			t.Errorf("[TestRunTasksWithChannels] Unexpected error: %v", err)
+		} else {
+			fmt.Println("[TestRunTasksWithChannels] Test passed: No errors")
 		}
+
 	})
 
 	t.Run("Task panics and propagates error", func(t *testing.T) {
@@ -78,17 +109,12 @@ func TestRunTasksWithChannels(t *testing.T) {
 		tasks := 5
 		errChan := make(chan error, 1)
 
-		go RunTasksWithChannels(tasks, MockTask, errChan, 2) // Panic on task 2
+		err := RunTasksWithChannels(tasks, MockTaskForChannels, errChan, 2) // Panic on task 2
 
-		select {
-		case err := <-errChan:
-			if err == nil {
-				t.Error("[TestRunTasksWithChannels] Expected error, got nil")
-			} else {
-				fmt.Printf("[TestRunTasksWithChannels] Test passed: Received expected error: %v\n", err)
-			}
-		case <-time.After(1 * time.Second):
-			t.Error("[TestRunTasksWithChannels] Timeout waiting for error")
+		if err == nil {
+			t.Error("[TestRunTasksWithChannels] Expected error, got nil")
+		} else {
+			fmt.Printf("[TestRunTasksWithChannels] Test passed: Received expected error: %v\n", err)
 		}
 	})
 }
