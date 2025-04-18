@@ -29,12 +29,13 @@ func testWithWorker() {
 	urls := make([]string, 5)
 
 	ulrsToAdd := []string{
-		"http://localhost:8084",
-		"http://localhost:8081",
 		"https://google.com",
 		"https://github.com",
 		"https://stackoverflow.com",
-		"https://facebook.com"}
+		"https://facebook.com",
+		"http://localhost:8084",
+		"http://localhost:8081",
+	}
 
 	for i, _ := range urls {
 		urls[i] = ulrsToAdd[i]
@@ -53,11 +54,17 @@ func testWithWorker() {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			select {
-			case <-ctx.Done():
-				fmt.Println("context cancelled, don't start the task")
-			case url := <-urlChan:
-				processUrl(ctx, url, resChan)
+			for {
+				select {
+				case <-ctx.Done():
+					fmt.Println("context cancelled, don't start the task")
+				case url, ok := <-urlChan:
+					if !ok {
+						return
+					} else {
+						processUrl(ctx, url, resChan)
+					}
+				}
 			}
 		}()
 	}
