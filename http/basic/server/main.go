@@ -82,15 +82,15 @@ func (s *SingleFlight) Do(key string, fn func() (interface{}, error)) (interface
 	defer func() {
 		if v := recover(); v != nil {
 			newCall.err = fmt.Errorf("panic: %v", v)
+			s.mu.Lock()
+			delete(s.m, key)
+			s.mu.Unlock()
 		}
 	}()
 	defer newCall.wg.Done()
 
 	newCall.val, newCall.err = fn()
 
-	s.mu.Lock()
-	delete(s.m, key)
-	s.mu.Unlock()
 	return newCall.val, newCall.err
 }
 
@@ -114,6 +114,7 @@ func (i *IdempotentHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	userID := r.URL.Query().Get("id")
 	if userID == "" {
 		http.Error(w, "Missing user ID", http.StatusBadRequest)
+		return
 	}
 
 	//look for idempotency key
@@ -123,15 +124,21 @@ func (i *IdempotentHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	i.mu.Lock()
-	if user, ok := i.cache[key]; ok {
-		if time.Since(user.UpdatedAt) > i.ttl {
+	if data, ok := i.cache[key]; ok {
+		if time.Since(data.UpdatedAt) > i.ttl {
 			i.mu.Unlock()
+			// update cache in the background with ctx background to avoid memory leak and control goroutine lifetime
 			go func() {
 				res, err := i.sf.Do(key, func() (interface{}, error) {
-					return task(ctx, userID, key)
+					ctxBackground, ctxBackgroundCancel := context.WithTimeout(context.Background(), i.timeout)
+					defer ctxBackgroundCancel()
+					defer log.Printf("background refresh done for key=%s", key)
+					return task(ctxBackground, userID)
 				})
 				if err != nil {
-					fmt.Errorf("error updating user data in the background")
+					// we need not lose errors and at least keep it somewhere
+					wErr := fmt.Errorf("error updating user data in the background %w", err)
+					log.Printf(wErr.Error())
 					return
 				}
 
@@ -145,40 +152,39 @@ func (i *IdempotentHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 				// TODO Save to db
 			}()
-		}
-		i.mu.Unlock()
-
-		res, err := i.sf.Do(key, func() (interface{}, error) {
-			return task(ctx, userID, key)
-		})
-		if err != nil {
-			fmt.Errorf("error updating user data in the background")
+			// return cache that will be soon updated
+			w.Header().Set("X-Cache", "STALE")
+			w.Write(data.Value)
 			return
 		}
-
-		// Save to cache
-		i.mu.Lock()
-		i.cache[key] = CacheEntry{
-			Value:     res.([]byte),
-			UpdatedAt: time.Now(),
-		}
-		i.mu.Unlock()
-
-		// TODO Save to db
 		w.Header().Set("X-Cache", "HIT")
-		w.Write(user.Value)
+		w.Write(data.Value)
 		return
 	}
 	i.mu.Unlock()
 
-}
-
-func singleFlightHandler(w http.ResponseWriter, r *http.Request) {
-	userId := r.URL.Query().Get("userId")
-	if userId == "" {
-		http.Error(w, "Missing userId", http.StatusBadRequest)
+	res, err := i.sf.Do(key, func() (interface{}, error) {
+		return task(ctx, userID)
+	})
+	if err != nil {
+		// we need not lose errors and at least keep it somewhere
+		wErr := fmt.Errorf("error processing user data %w", err)
+		log.Printf(wErr.Error())
+		http.Error(w, fmt.Sprintf("error processing user data %w", err), http.StatusInternalServerError)
+		return
 	}
 
+	// Save to cache
+	i.mu.Lock()
+	i.cache[key] = CacheEntry{
+		Value:     res.([]byte),
+		UpdatedAt: time.Now(),
+	}
+	i.mu.Unlock()
+
+	// TODO Save to db
+	w.Header().Set("X-Cache", "MISS")
+	w.Write(res.([]byte))
 }
 
 type userData struct {
@@ -186,7 +192,7 @@ type userData struct {
 	Data   string `json:"data"`
 }
 
-func task(ctx context.Context, userID, key string) ([]byte, error) {
+func task(ctx context.Context, userID string) ([]byte, error) {
 	url := fmt.Sprintf("http://external-api.local/user?id=%s", userID)
 
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
@@ -215,7 +221,7 @@ func task(ctx context.Context, userID, key string) ([]byte, error) {
 
 func generateIdempotencyKey(r *http.Request) string {
 	hash := sha256.New()
-	hash.Write([]byte(r.URL.Path))
+	hash.Write([]byte(r.URL.String()))
 	return hex.EncodeToString(hash.Sum(nil))
 }
 
