@@ -3,6 +3,7 @@ package worker_pool
 import (
 	"context"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 )
@@ -86,4 +87,27 @@ func TestWorkerPool_Cancel(t *testing.T) {
 	case <-time.After(time.Millisecond * 150):
 		t.Errorf("test timed out, result not received")
 	}
+}
+
+func Test(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	var wg sync.WaitGroup
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		select {
+		case <-ctx.Done():
+			fmt.Println(ctx.Err())
+			return
+		case <-time.After(7 * time.Second):
+			fmt.Println("timeout")
+			return
+		}
+	}()
+
+	wg.Wait()
+
 }

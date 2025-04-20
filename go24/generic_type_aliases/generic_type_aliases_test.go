@@ -6,6 +6,7 @@ import (
 )
 
 type StringAlias = string
+type StringArrAlias = []string
 
 type SetAlias[P comparable] = map[P]bool
 type SetString = SetAlias[string]
@@ -19,7 +20,7 @@ type A[P comparable] = TypeValue
 type B = A[bool]
 
 type AllowedTypes interface {
-	StringAlias | SetInt | SetString | B
+	StringAlias | StringArrAlias | SetInt | SetString | B
 }
 
 func NewBox[T AllowedTypes](value T) {
@@ -30,7 +31,7 @@ func TestAliases(t *testing.T) {
 	t.Run("Test pipeline success", func(t *testing.T) {
 		NewBox("Hello Go")
 
-		NewBox(map[string]bool{"a": true, "b": false})
+		NewBox([]string{"a", "b"})
 
 		NewBox(3)
 
