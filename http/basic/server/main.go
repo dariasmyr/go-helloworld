@@ -81,6 +81,7 @@ func (s *SingleFlight) Do(key string, fn func() (interface{}, error)) (interface
 	s.mu.Unlock()
 	defer func() {
 		if v := recover(); v != nil {
+			log.Printf("panic while processing cache in the background %v", v)
 			newCall.err = fmt.Errorf("panic: %v", v)
 			s.mu.Lock()
 			delete(s.m, key)
