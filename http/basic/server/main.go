@@ -81,7 +81,7 @@ func (s *SingleFlight) Do(key string, fn func() (interface{}, error)) (interface
 	s.mu.Unlock()
 	defer func() {
 		if v := recover(); v != nil {
-			log.Printf("panic while processing cache in the background %v", v)
+			log.Printf("panic recovered in SingleFlight for key=%s: %v", key, v)
 			newCall.err = fmt.Errorf("panic: %v", v)
 			s.mu.Lock()
 			delete(s.m, key)
@@ -206,7 +206,7 @@ type userData struct {
 }
 
 func task(ctx context.Context, userID string) ([]byte, error) {
-	url := fmt.Sprintf("http://external-api.local/user?id=%s", userID)
+	url := fmt.Sprintf("https://jsonplaceholder.typicode.com/users/%s", userID)
 
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
@@ -257,7 +257,7 @@ func main() {
 		ttl: 10 * time.Minute,
 	}
 
-	mux.Handle("/user", idempotentHandler)
+	mux.Handle("/idempotency/user", idempotentHandler)
 
 	// Register a handler for "/hello", wrapped with logging middleware.
 	// We explicitly wrap helloHandler with http.HandlerFunc to make it a http.Handler,
@@ -282,6 +282,6 @@ func main() {
 		Handler: mux,
 	}
 
-	log.Println("Server is running on http://localhost:8080")
+	log.Printf("Server is running on http://localhost%s", server.Addr)
 	log.Fatal(server.ListenAndServe())
 }
