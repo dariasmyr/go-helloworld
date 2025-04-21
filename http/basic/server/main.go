@@ -132,20 +132,27 @@ func (i *IdempotentHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				res, err := i.sf.Do(key, func() (interface{}, error) {
 					ctxBackground, ctxBackgroundCancel := context.WithTimeout(context.Background(), i.timeout)
 					defer ctxBackgroundCancel()
-					defer log.Printf("background refresh done for key=%s", key)
+					defer func() {
+						log.Printf("background refresh done for key=%s", key)
+					}()
 					return task(ctxBackground, userID)
 				})
 				if err != nil {
 					// we need not lose errors and at least keep it somewhere
-					wErr := fmt.Errorf("error updating user data in the background %w", err)
-					log.Printf(wErr.Error())
+					log.Printf("error updating user data in the background %v", err)
+					return
+				}
+
+				data, ok := res.([]byte)
+				if !ok {
+					log.Printf("invalid type in SingleFlight result: expected []byte, got %T (key=%s)", res, key)
 					return
 				}
 
 				// Save to cache
 				i.mu.Lock()
 				i.cache[key] = CacheEntry{
-					Value:     res.([]byte),
+					Value:     data,
 					UpdatedAt: time.Now(),
 				}
 				i.mu.Unlock()
@@ -168,23 +175,28 @@ func (i *IdempotentHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		// we need not lose errors and at least keep it somewhere
-		wErr := fmt.Errorf("error processing user data %w", err)
-		log.Printf(wErr.Error())
-		http.Error(w, fmt.Sprintf("error processing user data %w", err), http.StatusInternalServerError)
+		log.Printf("error processing user data %v", err)
+		http.Error(w, fmt.Sprintf("error processing user data %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	data, ok := res.([]byte)
+	if !ok {
+		log.Printf("invalid type in SingleFlight result: expected []byte, got %T (key=%s)", res, key)
 		return
 	}
 
 	// Save to cache
 	i.mu.Lock()
 	i.cache[key] = CacheEntry{
-		Value:     res.([]byte),
+		Value:     data,
 		UpdatedAt: time.Now(),
 	}
 	i.mu.Unlock()
 
 	// TODO Save to db
 	w.Header().Set("X-Cache", "MISS")
-	w.Write(res.([]byte))
+	w.Write(data)
 }
 
 type userData struct {
