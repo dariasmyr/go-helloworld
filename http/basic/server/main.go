@@ -130,10 +130,7 @@ func (i *IdempotentHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			// update cache in the background with ctx background to avoid memory leak and control goroutine lifetime
 			go func() {
 				res, err := i.sf.Do(key, func() (interface{}, error) {
-					ctxBackground, ctxBackgroundCancel := context.WithTimeout(context.Background(), i.timeout)
-					defer ctxBackgroundCancel()
-					defer log.Printf("background refresh done for key=%s", key)
-					return task(ctxBackground, userID)
+					return task(ctx, userID, i.timeout)
 				})
 				if err != nil {
 					// we need not lose errors and at least keep it somewhere
@@ -164,7 +161,7 @@ func (i *IdempotentHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	i.mu.Unlock()
 
 	res, err := i.sf.Do(key, func() (interface{}, error) {
-		return task(ctx, userID)
+		return task(ctx, userID, i.timeout)
 	})
 	if err != nil {
 		// we need not lose errors and at least keep it somewhere
@@ -192,10 +189,13 @@ type userData struct {
 	Data   string `json:"data"`
 }
 
-func task(ctx context.Context, userID string) ([]byte, error) {
+func task(ctx context.Context, userID string, timeout time.Duration) ([]byte, error) {
+	ctxBackground, ctxBackgroundCancel := context.WithTimeout(ctx, timeout)
+	defer ctxBackgroundCancel()
+
 	url := fmt.Sprintf("http://external-api.local/user?id=%s", userID)
 
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	req, err := http.NewRequestWithContext(ctxBackground, "GET", url, nil)
 	if err != nil {
 		return nil, err
 	}
