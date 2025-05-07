@@ -22,6 +22,8 @@ func (m *multiWriter) Write(p []byte) (n int, err error) {
 
 func sendMessagesWithRateLimit(messages []string, tickInterval time.Duration, maxRequests int) {
 	ticker := time.NewTicker(tickInterval)
+	ticker := time.NewTimer(tickInterval)
+	time.Now().After
 	defer ticker.Stop() // Not necessary
 
 	messageIndex := 0
