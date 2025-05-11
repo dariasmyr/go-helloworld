@@ -200,6 +200,42 @@ func task(ctx context.Context, userID string) ([]byte, error) {
 	return []byte(user.Data), nil
 }
 
+func taskWithRetry(ctx context.Context, userID string, maxRetries int) ([]byte, error) {
+	url := fmt.Sprintf("https://jsonplaceholder.typicode.com/users/%s", userID)
+
+	client := &http.Client{
+		Timeout: 10 * time.Second,
+	}
+
+	for i := 0; i <= maxRetries; i++ {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		if err != nil {
+			return nil, fmt.Errorf("creating request failed: %w", err)
+		}
+
+		resp, err := client.Do(req)
+		if err == nil {
+			defer resp.Body.Close()
+			var user userData
+			if err = json.NewDecoder(resp.Body).Decode(&user); err != nil {
+				return nil, fmt.Errorf("error decoding JSON: %w", err)
+			}
+			return []byte(user.Data), nil
+		}
+
+		select {
+		case <-ctx.Done():
+			fmt.Println("Context cancelled")
+			return nil, ctx.Err()
+		case <-time.After(5 * time.Second):
+			fmt.Println("Timeout")
+			return nil, ctx.Err()
+		}
+	}
+
+	return nil, fmt.Errorf("max retries exceeded")
+}
+
 func generateIdempotencyKey(r *http.Request) string {
 	hash := sha256.New()
 	hash.Write([]byte(r.URL.String()))
