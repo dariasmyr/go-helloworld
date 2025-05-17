@@ -113,8 +113,7 @@ func handleConnection(ctx context.Context, conn net.Conn, jobs chan<- Job) {
 
 // === Worker ===
 
-func worker(ctx context.Context, id int, jobs <-chan Job, results chan<- Result, wg *sync.WaitGroup) {
-	defer wg.Done()
+func worker(ctx context.Context, id int, jobs <-chan Job, results chan<- Result) {
 	for {
 		select {
 		case job, ok := <-jobs:
@@ -229,7 +228,10 @@ func main() {
 	numWorkers := 8
 	for i := 0; i < numWorkers; i++ {
 		workerWg.Add(1)
-		go worker(ctx, i, jobs, results, &workerWg)
+		go func() {
+			defer workerWg.Done()
+			worker(ctx, i, jobs, results)
+		}()
 	}
 
 	workerWg.Wait()
