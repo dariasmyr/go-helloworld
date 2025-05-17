@@ -154,6 +154,7 @@ func main() {
 	go func() {
 		<-stop
 		cancel()
+		signal.Stop(stop)
 	}()
 
 	listener, err := net.Listen("tcp", ":9090")
@@ -212,10 +213,10 @@ func main() {
 				continue
 			}
 			jobProducer.Add(1)
-			go func(ctx context.Context, c net.Conn, wg *sync.WaitGroup) {
-				defer wg.Done()
-				handleConnection(ctx, c, jobs)
-			}(ctx, conn, &jobProducer)
+			go func() {
+				defer jobProducer.Done()
+				handleConnection(ctx, conn, jobs)
+			}()
 		}
 	}()
 
