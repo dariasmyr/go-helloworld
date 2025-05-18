@@ -102,6 +102,11 @@ func handleConnection(ctx context.Context, conn net.Conn, jobs chan<- Job) {
 			return
 		}
 
+		if len(data) > 1024 {
+			fmt.Printf("too big data size from %s, closing the connection\n", conn.RemoteAddr().String())
+			return
+		}
+
 		select {
 		case jobs <- Job{Conn: conn, Data: data}:
 			// continue
@@ -153,7 +158,7 @@ func main() {
 	go func() {
 		<-stop
 		cancel()
-		signal.Stop(stop)
+		signal.Stop(stop) // Detach signals from
 	}()
 
 	listener, err := net.Listen("tcp", ":9090")
@@ -174,7 +179,9 @@ func main() {
 
 	go resultWriter(results, done)
 
-	limiter := NewRateLimiter(3, 10)
+	// limiter := NewRateLimiter(3, 10) // Do not match limiting purpose: rate limiter limits number of accepted connections per sec, we need to limit the number of simultaneousonhoing connections
+
+	sema := make(chan struct{}, 5)
 
 	go func() {
 		<-ctx.Done()
@@ -192,6 +199,7 @@ func main() {
 			if acceptErr != nil {
 				select {
 				case <-ctx.Done():
+					fmt.Println("context closed, closing server")
 					break acceptLoop
 				default:
 					fmt.Println("accept error:", acceptErr)
@@ -199,7 +207,16 @@ func main() {
 				}
 			}
 
-			if !limiter.Allow() {
+			select {
+			case sema <- struct{}{}:
+				jobProducer.Add(1)
+				go func() {
+					defer jobProducer.Done()
+					handleConnection(ctx, conn, jobs)
+					<-sema
+				}()
+			default:
+				//if !limiter.Allow() {
 				n, limitErr := fmt.Fprintln(conn, "Too many connections. Try later.")
 				if limitErr != nil {
 					fmt.Printf("error writing refusal message: %v, bytes written: %d\n", limitErr, n)
@@ -210,12 +227,8 @@ func main() {
 					return
 				}
 				continue
+				//}
 			}
-			jobProducer.Add(1)
-			go func() {
-				defer jobProducer.Done()
-				handleConnection(ctx, conn, jobs)
-			}()
 		}
 	}()
 
