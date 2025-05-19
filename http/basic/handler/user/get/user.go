@@ -120,7 +120,7 @@ func (i *IdempotentUserHandler) ServeHTTP(w http.ResponseWriter, r *http.Request
 						log.Printf("background refresh done for key=%s", key)
 						ctxBackgroundCancel()
 					}()
-					return taskWithRetry(ctxBackground, userID, 5)
+					return task(ctxBackground, userID)
 				})
 				if err != nil {
 					// we need not lose errors and at least keep it somewhere
@@ -156,7 +156,7 @@ func (i *IdempotentUserHandler) ServeHTTP(w http.ResponseWriter, r *http.Request
 	i.mu.Unlock()
 
 	res, err := i.sf.Do(key, func() (interface{}, error) {
-		return taskWithPanic(ctx, userID)
+		return task(ctx, userID)
 	})
 	if err != nil {
 		// we need not lose errors and at least keep it somewhere
@@ -199,26 +199,38 @@ type userData struct {
 func task(ctx context.Context, userID string) ([]byte, error) {
 	url := fmt.Sprintf("https://jsonplaceholder.typicode.com/users/%s", userID)
 
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
-	if err != nil {
-		return nil, err
+	req, reqErr := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if reqErr != nil {
+		return nil, &HTTPError{
+			Code: http.StatusInternalServerError,
+			Err:  reqErr,
+		}
 	}
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, &HTTPError{
+			Code: http.StatusBadGateway, // as our handler work as a proxy to reach other resourse, so its bad gateway
+			Err:  err,
+		}
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("external API error: %w", err)
+		return nil, &HTTPError{
+			Code: resp.StatusCode,
+			Err:  fmt.Errorf("external API error: status %d", resp.StatusCode),
+		}
 	}
 
 	var user userData
 	if err = json.NewDecoder(resp.Body).Decode(&user); err != nil {
-		return nil, fmt.Errorf("error decoding JSON: %w", err)
+		return nil, &HTTPError{
+			Code: http.StatusInternalServerError,
+			Err:  fmt.Errorf("error decoding JSON: %w", err),
+		}
 	}
 
-	// or use io.ReadAll(resp.Body) to ger raw bytes
+	// or use io.ReadAll(resp.Body) to get raw bytes
 
 	fmt.Println(user.Data)
 

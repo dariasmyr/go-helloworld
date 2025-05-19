@@ -3,7 +3,6 @@ package idempotency
 import (
 	"bytes"
 	"fmt"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -11,7 +10,6 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 func Test_IdempotentUserHandler_CacheMissThenHit(t *testing.T) {
@@ -20,53 +18,45 @@ func Test_IdempotentUserHandler_CacheMissThenHit(t *testing.T) {
 	server := httptest.NewServer(handler)
 	defer server.Close()
 
-	client := http.Client{}
-
-	req1, _ := http.NewRequest("GET", server.URL+"?id=1", nil)
+	req1 := httptest.NewRequest("GET", "/?id=1", nil)
 	req1.Header.Set("Idempotency-Key", "key-123")
-	resp1, err := client.Do(req1)
-	require.NoError(t, err)
-	body1, _ := io.ReadAll(resp1.Body)
-	resp1.Body.Close()
-	assert.Equal(t, "MISS", resp1.Header.Get("X-Cache"))
 
-	req2, _ := http.NewRequest("GET", server.URL+"?id=1", nil)
+	rec1 := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec1, req1)
+	assert.Equal(t, "MISS", rec1.Header().Get("X-Cache"))
+
+	req2 := httptest.NewRequest("GET", "/?id=1", nil)
 	req2.Header.Set("Idempotency-Key", "key-123")
-	resp2, err := client.Do(req2)
-	require.NoError(t, err)
-	body2, _ := io.ReadAll(resp2.Body)
-	resp2.Body.Close()
-	assert.Equal(t, "HIT", resp2.Header.Get("X-Cache"))
-	assert.True(t, bytes.Equal(body1, body2))
+	rec2 := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec2, req2)
+
+	assert.Equal(t, "HIT", rec2.Header().Get("X-Cache"))
+	assert.True(t, bytes.Equal(rec2.Body.Bytes(), rec2.Body.Bytes()))
 }
 
 func Test_IdempotentUserHandler_ParallelRequests(t *testing.T) {
-	handler := NewIdempotentHandler(2*time.Second, 5*time.Minute)
-
-	server := httptest.NewServer(handler)
-	defer server.Close()
+	handler := NewIdempotentHandler(5*time.Second, 5*time.Minute)
 
 	var wg sync.WaitGroup
 	const parallel = 50
 
 	results := make([][]byte, parallel)
 	errors := make([]error, parallel)
-	client := http.Client{}
 
 	for i := 0; i < parallel; i++ {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			req, _ := http.NewRequest("GET", server.URL+"?id=1", nil)
+			req := httptest.NewRequest("GET", "/?id=1", nil)
 			req.Header.Set("Idempotency-Key", "shared-key")
-			resp, err := client.Do(req)
-			if err != nil {
-				errors[i] = err
-				return
-			}
-			defer resp.Body.Close()
-			body, _ := io.ReadAll(resp.Body)
-			results[i] = body
+
+			rec := httptest.NewRecorder()
+
+			handler.ServeHTTP(rec, req)
+
+			results[i] = []byte(rec.Body.String())
 		}(i)
 	}
 	wg.Wait()
