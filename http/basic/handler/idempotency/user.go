@@ -5,12 +5,25 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
+	"math/rand"
 	"net/http"
 	"sync"
 	"time"
 )
+
+var rng = rand.New(rand.NewSource(time.Now().UnixNano()))
+
+type HTTPError struct {
+	Code int
+	Err  error
+}
+
+func (e *HTTPError) Error() string {
+	return e.Err.Error()
+}
 
 // test handler with idempotency via singleflight processing
 type call struct {
@@ -24,7 +37,7 @@ type SingleFlight struct {
 	m  map[string]*call
 }
 
-func (s *SingleFlight) Do(key string, fn func() (interface{}, error)) (interface{}, error) {
+func (s *SingleFlight) Do(key string, fn func() (interface{}, error)) (val interface{}, err error) {
 	s.mu.Lock()
 	if existingCall, exists := s.m[key]; exists {
 		s.mu.Unlock()
@@ -37,19 +50,22 @@ func (s *SingleFlight) Do(key string, fn func() (interface{}, error)) (interface
 	s.m[key] = newCall
 	s.mu.Unlock()
 	defer func() {
-		newCall.wg.Done()
 		if v := recover(); v != nil {
 			log.Printf("panic recovered in SingleFlight for key=%s: %v", key, v)
-			newCall.err = fmt.Errorf("panic: %v", v)
+			err = fmt.Errorf("panic: %v", v)
+			newCall.err = err
 			s.mu.Lock()
 			delete(s.m, key)
 			s.mu.Unlock()
 		}
+		newCall.wg.Done()
 	}()
 
 	newCall.val, newCall.err = fn()
 
-	return newCall.val, newCall.err
+	val = newCall.val
+	err = newCall.err
+	return
 }
 
 type CacheEntry struct {
@@ -140,12 +156,19 @@ func (i *IdempotentUserHandler) ServeHTTP(w http.ResponseWriter, r *http.Request
 	i.mu.Unlock()
 
 	res, err := i.sf.Do(key, func() (interface{}, error) {
-		return taskWithRetry(ctx, userID, 5)
+		return taskWithPanic(ctx, userID)
 	})
 	if err != nil {
 		// we need not lose errors and at least keep it somewhere
+		var httpErr *HTTPError
+		if errors.As(err, &httpErr) {
+			log.Printf("error processing user data with code %d: %v", httpErr.Code, httpErr.Err)
+			http.Error(w, httpErr.Error(), httpErr.Code)
+			return
+		}
+		// errors that have no wrapped HTTPErr error
 		log.Printf("error processing user data %v", err)
-		http.Error(w, fmt.Sprintf("error processing user data %v", err), http.StatusInternalServerError)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
@@ -170,7 +193,7 @@ func (i *IdempotentUserHandler) ServeHTTP(w http.ResponseWriter, r *http.Request
 
 type userData struct {
 	UserId string `json:"userId"`
-	Data   string `json:"data"`
+	Data   string `json:"name"`
 }
 
 func task(ctx context.Context, userID string) ([]byte, error) {
@@ -195,7 +218,9 @@ func task(ctx context.Context, userID string) ([]byte, error) {
 		return nil, fmt.Errorf("error decoding JSON: %w", err)
 	}
 
-	// ir use io.ReadAll(resp.Body) to ger raw bytes
+	// or use io.ReadAll(resp.Body) to ger raw bytes
+
+	fmt.Println(user.Data)
 
 	return []byte(user.Data), nil
 }
@@ -242,4 +267,48 @@ func generateIdempotencyKey(r *http.Request) string {
 	hash := sha256.New()
 	hash.Write([]byte(r.URL.String()))
 	return hex.EncodeToString(hash.Sum(nil))
+}
+
+func taskWithPanic(ctx context.Context, userID string) ([]byte, error) {
+	if rng.Intn(2)%2 == 0 {
+		panic("panic while user handling")
+	}
+
+	url := fmt.Sprintf("https://jsonplaceholder.typicode.com/users/%s", userID)
+	client := &http.Client{
+		Timeout: 10 * time.Second,
+	}
+
+	req, reqErr := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if reqErr != nil {
+		return nil, &HTTPError{
+			Code: http.StatusInternalServerError,
+			Err:  reqErr,
+		}
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, &HTTPError{
+			Code: http.StatusInternalServerError,
+			Err:  err,
+		}
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, &HTTPError{
+			Code: resp.StatusCode,
+			Err:  fmt.Errorf("external API error: status %d", resp.StatusCode),
+		}
+	}
+
+	var user userData
+
+	decodeErr := json.NewDecoder(resp.Body).Decode(&user)
+	if decodeErr != nil {
+		return nil, &HTTPError{Code: http.StatusInternalServerError, Err: decodeErr}
+	}
+
+	return []byte(user.Data), nil
 }

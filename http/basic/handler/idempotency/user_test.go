@@ -2,6 +2,7 @@ package idempotency
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -106,4 +107,20 @@ func Test_IdempotentUserHandler_InvalidId(t *testing.T) {
 
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 	assert.Contains(t, rec.Body.String(), "Missing user ID")
+}
+
+func Test_IdempotentUserHandler_RandomPanic(t *testing.T) {
+	handler := NewIdempotentHandler(1*time.Second, 1*time.Minute)
+
+	req := httptest.NewRequest("GET", "/?id=1", nil)
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusInternalServerError, rec.Code)
+
+	body := rec.Body.String()
+	fmt.Println("Response: ", body)
+
+	assert.Contains(t, body, "panic while user handling")
 }
