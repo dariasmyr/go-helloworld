@@ -37,6 +37,7 @@ func (s *SingleFlight) Do(key string, fn func() (interface{}, error)) (interface
 	s.m[key] = newCall
 	s.mu.Unlock()
 	defer func() {
+		newCall.wg.Done()
 		if v := recover(); v != nil {
 			log.Printf("panic recovered in SingleFlight for key=%s: %v", key, v)
 			newCall.err = fmt.Errorf("panic: %v", v)
@@ -45,7 +46,6 @@ func (s *SingleFlight) Do(key string, fn func() (interface{}, error)) (interface
 			s.mu.Unlock()
 		}
 	}()
-	defer newCall.wg.Done()
 
 	newCall.val, newCall.err = fn()
 
@@ -100,11 +100,11 @@ func (i *IdempotentUserHandler) ServeHTTP(w http.ResponseWriter, r *http.Request
 			go func() {
 				res, err := i.sf.Do(key, func() (interface{}, error) {
 					ctxBackground, ctxBackgroundCancel := context.WithTimeout(context.Background(), i.timeout)
-					defer ctxBackgroundCancel()
 					defer func() {
 						log.Printf("background refresh done for key=%s", key)
+						ctxBackgroundCancel()
 					}()
-					return task(ctxBackground, userID)
+					return taskWithRetry(ctxBackground, userID, 5)
 				})
 				if err != nil {
 					// we need not lose errors and at least keep it somewhere
@@ -140,7 +140,7 @@ func (i *IdempotentUserHandler) ServeHTTP(w http.ResponseWriter, r *http.Request
 	i.mu.Unlock()
 
 	res, err := i.sf.Do(key, func() (interface{}, error) {
-		return task(ctx, userID)
+		return taskWithRetry(ctx, userID, 5)
 	})
 	if err != nil {
 		// we need not lose errors and at least keep it somewhere
@@ -226,10 +226,12 @@ func taskWithRetry(ctx context.Context, userID string, maxRetries int) ([]byte, 
 		select {
 		case <-ctx.Done():
 			fmt.Println("Context cancelled")
-			return nil, ctx.Err()
-		case <-time.After(5 * time.Second):
+			return nil, fmt.Errorf("context cancelled %w", ctx.Err())
+		case <-time.After(time.Duration(i) * time.Second): // type converted i to time.Duration(i) to add incremental backoff retry
+			if i == maxRetries {
+				return nil, ctx.Err()
+			}
 			fmt.Println("Timeout")
-			return nil, ctx.Err()
 		}
 	}
 
