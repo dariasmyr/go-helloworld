@@ -2,7 +2,8 @@ package main
 
 import (
 	"fmt"
-	"go-helloworld/http/basic/handler/idempotency"
+	"go-helloworld/http/basic/handler/httperror"
+	idempotency "go-helloworld/http/basic/handler/user/get"
 	"log"
 	"net/http"
 	"strings"
@@ -18,6 +19,19 @@ func helloHandler(w http.ResponseWriter, r *http.Request) {
 		name = "World"
 	}
 	fmt.Fprintf(w, "Hello, %s \n", name)
+}
+
+func echoHandler(w http.ResponseWriter, r *http.Request) error {
+	echo := r.URL.Query().Get("echo")
+	if echo == "" {
+		return httperror.NewHTTPError(
+			http.StatusBadRequest,
+			fmt.Errorf("empry echo param"),
+		)
+	}
+
+	fmt.Fprintf(w, "echo %s\n", echo)
+	return nil
 }
 
 // userHandler handles requests like /user/123 and extracts the ID from the path.
@@ -60,6 +74,8 @@ func main() {
 	// The function is automatically wrapped into http.HandlerFunc,
 	// making it compatible with http.Handler.
 	mux.HandleFunc("/user/", userHandler)
+
+	mux.Handle("/echo", httperror.HTTPErrorMiddleware(echoHandler))
 
 	idempotentUserHandler := idempotency.NewIdempotentHandler(10*time.Second, 10*time.Minute)
 
