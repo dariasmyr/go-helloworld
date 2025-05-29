@@ -8,13 +8,10 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"math/rand"
 	"net/http"
 	"sync"
 	"time"
 )
-
-var rng = rand.New(rand.NewSource(time.Now().UnixNano()))
 
 type HTTPError struct {
 	Code int
@@ -175,7 +172,7 @@ func (i *IdempotentUserHandler) ServeHTTP(w http.ResponseWriter, r *http.Request
 	data, ok := res.([]byte)
 	if !ok {
 		errMsg := fmt.Sprintf("invalid type in SingleFlight result: expected []byte, got %T (key=%s)", res, key)
-		log.Printf("error: ", errMsg)
+		log.Printf("error: %s", errMsg)
 		http.Error(w, "interval server error", http.StatusInternalServerError)
 		return
 	}
