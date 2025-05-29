@@ -174,7 +174,9 @@ func (i *IdempotentUserHandler) ServeHTTP(w http.ResponseWriter, r *http.Request
 
 	data, ok := res.([]byte)
 	if !ok {
-		log.Printf("invalid type in SingleFlight result: expected []byte, got %T (key=%s)", res, key)
+		errMsg := fmt.Sprintf("invalid type in SingleFlight result: expected []byte, got %T (key=%s)", res, key)
+		log.Printf("error: ", errMsg)
+		http.Error(w, "interval server error", http.StatusInternalServerError)
 		return
 	}
 

@@ -2,8 +2,9 @@ package main
 
 import (
 	"fmt"
-	"go-helloworld/http/basic/handler/httperror"
 	idempotency "go-helloworld/http/basic/handler/user/get"
+	"go-helloworld/http/basic/middleware/httperror"
+	"go-helloworld/http/basic/middleware/recover"
 	"log"
 	"net/http"
 	"strings"
@@ -23,10 +24,10 @@ func helloHandler(w http.ResponseWriter, r *http.Request) {
 
 func echoHandler(w http.ResponseWriter, r *http.Request) error {
 	echo := r.URL.Query().Get("echo")
-	if echo == "" {
+	if strings.TrimSpace(echo) == "" {
 		return httperror.NewHTTPError(
 			http.StatusBadRequest,
-			fmt.Errorf("empry echo param"),
+			fmt.Errorf("empty echo param"),
 		)
 	}
 
@@ -70,12 +71,12 @@ func main() {
 	// It matches the incoming request path against the registered routes.
 	mux := http.NewServeMux()
 
+	mux.Handle("/echo", recover.RecoverMiddleware(httperror.HTTPErrorMiddleware(echoHandler)))
+
 	// Register a handler function for "/user/".
 	// The function is automatically wrapped into http.HandlerFunc,
 	// making it compatible with http.Handler.
 	mux.HandleFunc("/user/", userHandler)
-
-	mux.Handle("/echo", httperror.HTTPErrorMiddleware(echoHandler))
 
 	idempotentUserHandler := idempotency.NewIdempotentHandler(10*time.Second, 10*time.Minute)
 

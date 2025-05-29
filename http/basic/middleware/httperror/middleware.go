@@ -16,7 +16,8 @@ func HTTPErrorMiddleware(handler HTTPHandlerWithError) http.Handler {
 				http.Error(w, httpError.Error(), httpError.Code)
 				return
 			}
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return // necessary not to panic by http.WriteHeader re-writing
 		}
-		http.Error(w, err.Error(), http.StatusInternalServerError)
 	})
 }
