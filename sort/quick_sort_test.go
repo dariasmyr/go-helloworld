@@ -2,7 +2,6 @@ package sort
 
 import (
 	"fmt"
-	"sort"
 	"testing"
 )
 
@@ -28,91 +27,52 @@ func quickSort(arr []string) []string {
 	fmt.Println("Left", left)
 	fmt.Println("Right", right)
 
-	fmt.Println("Recursive call for left", left)
 	sortedLeft := quickSort(left)
-	fmt.Println("Sorted left", sortedLeft)
-
-	fmt.Println("Recursive call for right", right)
 	sortedRight := quickSort(right)
-	fmt.Println("Sorted right", sortedRight)
 
 	return append(append(sortedLeft, pivot), sortedRight...)
 }
 
-func topKFrequent(words []string, k int) []string {
-
-	sortedArray := quickSortStr(words)
-
-	fmt.Printf("SortedArray: %v\n", sortedArray)
-
-	wordsMap := map[string]int{}
-
-	for _, word := range sortedArray {
-		wordsMap[word]++
+func mergeSort(arr []string) []string {
+	if len(arr) <= 1 {
+		return arr
 	}
 
-	fmt.Printf("WordsMap: %v", wordsMap)
+	mid := len(arr) / 2
 
-	type wordFreq struct {
-		word  string
-		count int
-	}
+	left := mergeSort(arr[:mid])
+	right := mergeSort(arr[mid:])
 
-	var wordList []wordFreq
+	return merge(left, right)
+}
 
-	for word, freq := range wordsMap {
-		wordList = append(wordList, wordFreq{word: word, count: freq})
-	}
+func merge(left, right []string) []string {
+	result := make([]string, 0, len(left)+len(right))
+	i, j := 0, 0
 
-	sort.Slice(wordList, func(i, j int) bool {
-		if wordList[i].count == wordList[j].count {
-			return wordList[i].word < wordList[j].word
+	for i < len(left) && j < len(right) {
+		if left[i] < right[j] {
+			result = append(result, left[i])
+			i++
 		} else {
-			return wordList[i].count > wordList[j].count
+			result = append(result, right[j])
+			j++
 		}
-	})
-
-	fmt.Printf("wordList: %v", wordList)
-
-	result := make([]string, 0, k)
-	for i := 0; i < k; i++ {
-		result = append(result, wordList[i].word)
 	}
+
+	result = append(result, left[i:]...)
+	result = append(result, right[j:]...)
 
 	return result
 }
-func quickSortStr(words []string) []string {
-	if len(words) == 0 {
-		return words
-	}
 
-	pivot := words[len(words)-1]
-
-	var left []string
-	var right []string
-
-	for i := 0; i < len(words)-1; i++ {
-		if words[i] >= pivot {
-			right = append(right, words[i])
-		} else {
-			left = append(left, words[i])
-		}
-	}
-
-	sortedLeft := quickSort(left)
-	sortedRight := quickSort(right)
-
-	return append(append(sortedLeft, pivot), sortedRight...)
-}
-
-func testSort() {
+func TestQuickSort(t *testing.T) {
 	arr := []string{"o", "a", "b", "g", "k"}
 	fmt.Println("Arr", arr)
 
-	sortedArr := quickSort(arr)
-	fmt.Println("sortedArr", sortedArr)
-}
+	qSortedArr := quickSort(arr)
+	fmt.Println("Quick Sort result: ", qSortedArr)
 
-func TestQuickSort(t *testing.T) {
-	testSort()
+	mSortedArr := mergeSort(arr)
+	fmt.Println("Merge Sort result: ", mSortedArr)
 }
