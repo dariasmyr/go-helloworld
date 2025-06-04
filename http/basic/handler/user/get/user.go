@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math/rand"
 	"net/http"
 	"sync"
 	"time"
@@ -280,8 +281,10 @@ func generateIdempotencyKey(r *http.Request) string {
 	return hex.EncodeToString(hash.Sum(nil))
 }
 
+var rnd = rand.New(rand.NewSource(time.Now().UnixNano()))
+
 func taskWithPanic(ctx context.Context, userID string) ([]byte, error) {
-	if rng.Intn(2)%2 == 0 {
+	if rnd.Intn(2)%2 == 0 {
 		panic("panic while user handling")
 	}
 
