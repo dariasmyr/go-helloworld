@@ -108,7 +108,7 @@ func (ci *ConsumerInstance) Run() {
 }
 
 func (ci *ConsumerInstance) processMessage(msg *kafka.Message) {
-	err := ci.processor.Process(msg)
+	err := ci.processor.Process(ci.ctx, msg)
 	if err != nil {
 		log.Printf("Processor error: %v, scheduling retry...", err)
 		ci.scheduleRetry(*msg)
@@ -135,7 +135,7 @@ func (ci *ConsumerInstance) retryLoop() {
 			log.Println("Context cancelled: stop retry loop")
 			return
 		case msg := <-ci.retryCh:
-			err := ci.processor.Process(&msg)
+			err := ci.processor.Process(ci.ctx, &msg)
 			if err != nil {
 				log.Printf("Scheduled processor error: %v", err)
 				return
