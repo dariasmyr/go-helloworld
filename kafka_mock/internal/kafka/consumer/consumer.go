@@ -1,55 +1,61 @@
 package kafka
 
 import (
-	"slog"
-	"kafka"
 	"context"
+	"fmt"
+	"github.com/confluentinc/confluent-kafka-go/kafka"
+	"go-helloworld/kafka_mock/internal/processor"
+	"log"
+	"log/slog"
+	"sync"
+	"time"
 )
 
 type ConsumerGroupManager struct {
-	logger *slog.logger
+	logger         *slog.Logger
 	consumerGroups map[string][]*ConsumerInstance
-	wg sync.WaitGroup
+	wg             sync.WaitGroup
 }
 
 type ConsumerInstance struct {
-	ID string
-	ctx context.Context
-	consumer *kafka.Consumer
-	cancelFunc context.cancelFunc
-	processor processor.Processor
-	retryCh chan kafka.Message
+	ID         string
+	ctx        context.Context
+	cancelFunc context.CancelFunc
+	consumer   *kafka.Consumer
+	processor  processor.Processor
+	retryCh    chan kafka.Message
 }
 
-func NewConsumerGroupManager (
-	logger *slog.logger, 
-	brokers, groupPrefix string, 
+func NewConsumerGroupManager(
+	logger *slog.Logger,
+	brokers, groupPrefix string,
 	topics []string,
 	processorFactory func(topic string) processor.Processor,
-	) (*ConsumerGroupManager, error) {
-	ctx, cancel := context.WithCancel(context.Background())
-	
-	partitionsPerTopic, partitionsErr := GetTopicPartitionCounts(brokers, topic)
-		if partitionsErr != nil {
-			return nil, fmt.Error("error getting partitions: %s: %w", topic, partitionsErr)
+) (*ConsumerGroupManager, error) {
+	ctx := context.Background()
+
+	partitionsPerTopic, partitionsErr := GetTopicPartitionCounts(brokers, topics)
+	if partitionsErr != nil {
+		return nil, fmt.Errorf("error getting partitions: topics: %v: error: %w", topics, partitionsErr)
 	}
 
 	manager := &ConsumerGroupManager{
+		logger:         logger,
 		consumerGroups: make(map[string][]*ConsumerInstance),
 	}
 
 	for topic, partitionsCount := range partitionsPerTopic {
 		groupId := fmt.Sprintf("%s-%s", groupPrefix, topic)
 
-		processor := processor.GetProcessor(topic)
+		processorFunc := processorFactory(topic)
 
-		if partitionCount > 0 {
-			consumers, consumerErr := CreateConsumers(ctx, brokers, groupId, topic, processor, partitionsCount) 
-		    if consumerErr != nil {
-			    return nil, fmt.Error("failde to create service for topic %s: %w", topic, err)
-		    }
+		if partitionsCount > 0 {
+			consumers, consumerErr := CreateConsumers(ctx, brokers, groupId, topic, processorFunc, partitionsCount)
+			if consumerErr != nil {
+				return nil, fmt.Errorf("failde to create service for topic %s: %w", topic, consumerErr)
+			}
 
-		    manager.consumerGroups[topic] = consumerGroup
+			manager.consumerGroups[topic] = consumers
 		}
 	}
 
@@ -60,20 +66,20 @@ func (m *ConsumerGroupManager) StartAllGroups() {
 	for topic, group := range m.consumerGroups {
 		m.wg.Add(1)
 		m.logger.Info("Starting consumer group for topic", "topic", topic)
-		go func(){
+		go func() {
 			for i, consumer := range group {
 				m.logger.Info("Started consumer", "id", i, "topic", topic)
-				defer m.wd.Done()
-			    consumer.Run()
+				defer m.wg.Done()
+				consumer.Run()
 			}
 		}()
 	}
 }
 
 func (m *ConsumerGroupManager) CloseAllGroups() {
-	for topic, group := range m.consumerGroups {
-		for _, inst := range group.consumers {
-			inst.Cancel()
+	for _, group := range m.consumerGroups {
+		for _, inst := range group {
+			inst.cancelFunc()
 		}
 	}
 	m.wg.Wait()
@@ -82,7 +88,7 @@ func (m *ConsumerGroupManager) CloseAllGroups() {
 func (ci *ConsumerInstance) Run() {
 	for {
 		select {
-		case <-ci.Context.Done():
+		case <-ci.ctx.Done():
 			log.Println("Context cancelled: kafka consumer shutting down")
 			return
 		default:
@@ -93,7 +99,7 @@ func (ci *ConsumerInstance) Run() {
 
 			switch msg := ev.(type) {
 			case *kafka.Message:
-				go ci.consumer.processMessage(msg)
+				go ci.processMessage(msg)
 			case kafka.Error:
 				log.Printf("Kafka error: %v", msg)
 			}
@@ -102,7 +108,7 @@ func (ci *ConsumerInstance) Run() {
 }
 
 func (ci *ConsumerInstance) processMessage(msg *kafka.Message) {
-	err := ci.processor.Process(msg.Value)
+	err := ci.processor.Process(msg)
 	if err != nil {
 		log.Printf("Processor error: %v, scheduling retry...", err)
 		ci.scheduleRetry(*msg)
@@ -116,7 +122,7 @@ func (ci *ConsumerInstance) processMessage(msg *kafka.Message) {
 }
 
 func (ci *ConsumerInstance) scheduleRetry(msg kafka.Message) {
-	go func(){
+	go func() {
 		time.Sleep(5 * time.Second)
 		ci.retryCh <- msg
 	}()
@@ -125,17 +131,20 @@ func (ci *ConsumerInstance) scheduleRetry(msg kafka.Message) {
 func (ci *ConsumerInstance) retryLoop() {
 	for {
 		select {
-		case <- ci.Context.Done():
+		case <-ci.ctx.Done():
 			log.Println("Context cancelled: stop retry loop")
 			return
-		case msg:= <- ci.retryCh:
-			cs.processor.Process(&msg)
+		case msg := <-ci.retryCh:
+			err := ci.processor.Process(&msg)
+			if err != nil {
+				log.Printf("Scheduled processor error: %v", err)
+				return
+			}
 		}
 	}
 }
 
-
-func CreateConsumers(ctx context.Context, brokers, groupId, topic string, processor processor.Processor, partitionsCount int) []*ConsumerInstance {
+func CreateConsumers(ctx context.Context, brokers, groupID, topic string, processor processor.Processor, partitionsCount int) ([]*ConsumerInstance, error) {
 	config := &kafka.ConfigMap{
 		"bootstrap.servers":        brokers,
 		"group.id":                 groupID,
@@ -147,33 +156,38 @@ func CreateConsumers(ctx context.Context, brokers, groupId, topic string, proces
 
 	consumers := make([]*ConsumerInstance, 0, partitionsCount)
 
-	for i:=0; i<partitionCount; i++ {
+	for i := 0; i < partitionsCount; i++ {
 		ctxWithCancel, cancel := context.WithCancel(ctx)
 		c, err := kafka.NewConsumer(config)
 		if err != nil {
+			cancel()
 			return nil, err
 		}
-		
-		err = c.SubscribeTopic(topic, nil)
+
+		err = c.Subscribe(topic, nil)
 		if err != nil {
+			cancel()
+			closeErr := c.Close()
+			if closeErr != nil {
+				return nil, closeErr
+			}
 			return nil, err
 		}
 
 		consumers[i] = &ConsumerInstance{
-			ID: fmt.Sprintf("%s-%s-%d", topic, groupId, i),
-			consumer: c,
-			Context: ctxWithCancel,
-			Cancel: cancel,
-			processor: processor,
-			make(chan kafka.Message, 1000),
+			ID:         fmt.Sprintf("%s-%s-%d", topic, groupID, i),
+			consumer:   c,
+			ctx:        ctxWithCancel,
+			cancelFunc: cancel,
+			processor:  processor,
+			retryCh:    make(chan kafka.Message, 1000),
 		}
 	}
 
-	return consumers
-} 
+	return consumers, nil
+}
 
-
-func GetTopicPartitionCounts(brokers, topic string) (map[string]int error) {
+func GetTopicPartitionCounts(brokers string, topics []string) (map[string]int, error) {
 	admin, err := kafka.NewAdminClient(&kafka.ConfigMap{"bootstrap.servers": brokers})
 	if err != nil {
 		return nil, err
@@ -181,11 +195,11 @@ func GetTopicPartitionCounts(brokers, topic string) (map[string]int error) {
 	defer admin.Close()
 
 	metadata, err := admin.GetMetadata(nil, true, 10_000)
-	if err !- nil {
+	if err != nil {
 		return nil, err
 	}
 
-	couns := make(map[string]int)
+	counts := make(map[string]int)
 	for _, topic := range topics {
 		topicMeta, ok := metadata.Topics[topic]
 		if !ok {
