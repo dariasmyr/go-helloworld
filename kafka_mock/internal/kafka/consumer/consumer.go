@@ -19,11 +19,18 @@ type ConsumerGroupManager struct {
 
 type ConsumerInstance struct {
 	ID         string
+	logger     *slog.Logger
 	ctx        context.Context
 	cancelFunc context.CancelFunc
 	consumer   *kafka.Consumer
 	processor  processor.Processor
-	retryCh    chan kafka.Message
+	retryCh    chan RetryMsg
+	semCh      chan struct{}
+}
+
+type RetryMsg struct {
+	attempt int
+	msg     kafka.Message
 }
 
 func NewConsumerGroupManager(
@@ -50,7 +57,7 @@ func NewConsumerGroupManager(
 		processorFunc := processorFactory(topic)
 
 		if partitionsCount > 0 {
-			consumers, consumerErr := CreateConsumers(ctx, brokers, groupId, topic, processorFunc, partitionsCount)
+			consumers, consumerErr := CreateConsumers(logger, ctx, brokers, groupId, topic, processorFunc, partitionsCount)
 			if consumerErr != nil {
 				return nil, fmt.Errorf("failde to create service for topic %s: %w", topic, consumerErr)
 			}
@@ -99,7 +106,13 @@ func (ci *ConsumerInstance) Run() {
 
 			switch msg := ev.(type) {
 			case *kafka.Message:
-				go ci.processMessage(msg)
+				ci.semCh <- struct{}{}
+				go func() {
+					defer func() {
+						<-ci.semCh
+					}()
+					ci.processMessage(msg)
+				}()
 			case kafka.Error:
 				log.Printf("Kafka error: %v", msg)
 			}
@@ -108,10 +121,12 @@ func (ci *ConsumerInstance) Run() {
 }
 
 func (ci *ConsumerInstance) processMessage(msg *kafka.Message) {
-	err := ci.processor.Process(ci.ctx, msg)
+	timeoutCtx, timeoutCancel := context.WithTimeout(ci.ctx, 30*time.Second)
+	defer timeoutCancel()
+	err := ci.processor.Process(timeoutCtx, msg)
 	if err != nil {
 		log.Printf("Processor error: %v, scheduling retry...", err)
-		ci.scheduleRetry(*msg)
+		ci.scheduleRetry(*msg, 0)
 		return
 	}
 
@@ -121,10 +136,15 @@ func (ci *ConsumerInstance) processMessage(msg *kafka.Message) {
 	}
 }
 
-func (ci *ConsumerInstance) scheduleRetry(msg kafka.Message) {
+func (ci *ConsumerInstance) scheduleRetry(msg kafka.Message, attempt int) {
+	if attempt > 5 {
+		ci.logger.Error("Max retries exceeded", "key", string(msg.Key))
+		return
+	}
+
 	go func() {
 		time.Sleep(5 * time.Second)
-		ci.retryCh <- msg
+		ci.retryCh <- RetryMsg{attempt + 1, msg}
 	}()
 }
 
@@ -134,8 +154,8 @@ func (ci *ConsumerInstance) retryLoop() {
 		case <-ci.ctx.Done():
 			log.Println("Context cancelled: stop retry loop")
 			return
-		case msg := <-ci.retryCh:
-			err := ci.processor.Process(ci.ctx, &msg)
+		case retryMsg := <-ci.retryCh:
+			err := ci.processor.Process(ci.ctx, &retryMsg.msg)
 			if err != nil {
 				log.Printf("Scheduled processor error: %v", err)
 				return
@@ -144,7 +164,7 @@ func (ci *ConsumerInstance) retryLoop() {
 	}
 }
 
-func CreateConsumers(ctx context.Context, brokers, groupID, topic string, processor processor.Processor, partitionsCount int) ([]*ConsumerInstance, error) {
+func CreateConsumers(logger *slog.Logger, ctx context.Context, brokers, groupID, topic string, processor processor.Processor, partitionsCount int) ([]*ConsumerInstance, error) {
 	config := &kafka.ConfigMap{
 		"bootstrap.servers":        brokers,
 		"group.id":                 groupID,
@@ -174,14 +194,16 @@ func CreateConsumers(ctx context.Context, brokers, groupID, topic string, proces
 			return nil, err
 		}
 
-		consumers[i] = &ConsumerInstance{
+		consumers = append(consumers, &ConsumerInstance{
 			ID:         fmt.Sprintf("%s-%s-%d", topic, groupID, i),
+			logger:     logger,
 			consumer:   c,
 			ctx:        ctxWithCancel,
 			cancelFunc: cancel,
 			processor:  processor,
-			retryCh:    make(chan kafka.Message, 1000),
-		}
+			retryCh:    make(chan RetryMsg, 1000),
+			semCh:      make(chan struct{}, 10),
+		})
 	}
 
 	return consumers, nil
