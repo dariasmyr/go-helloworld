@@ -1,7 +1,6 @@
 package goroutines_safety
 
 import (
-	"context"
 	"fmt"
 	"sync"
 	"testing"
@@ -18,16 +17,12 @@ func RunTasksWithChannels(tasks int, taskFunc func(int, int) func(), errChan cha
 
 	var err error
 
-	go func(errChan chan error, e *error) {
-		for {
-			select {
-			case err := <-errChan:
-				if err != nil {
-					*e = err
-				}
-			}
+	go func() {
+		panicErr := <-errChan
+		if panicErr != nil {
+			err = panicErr
 		}
-	}(errChan, &err)
+	}()
 
 	wg.Add(tasks)
 	for i := 0; i < tasks; i++ {
@@ -52,25 +47,6 @@ func RunTasksWithChannels(tasks int, taskFunc func(int, int) func(), errChan cha
 	fmt.Println("[RunTasksWithChannels] All tasks completed. Closing error channel.")
 	close(errChan)
 	return err
-}
-
-func MockTask(ctx context.Context, id int, failOn int) func() {
-	return func() {
-		select {
-		case <-ctx.Done():
-			fmt.Println("[MockTask] Context is done, do not continue executing task ", id)
-			return
-		default:
-			fmt.Printf("[mockTask] Task %d start executing\n", id)
-			if id == failOn {
-				fmt.Printf("[mockTask] Task %d will panic\n", id)
-				panic("Task failed")
-			} else {
-				time.Sleep(100 * time.Millisecond) // Mock executing
-				fmt.Printf("[mockTask] Task %d finished executing\n", id)
-			}
-		}
-	}
 }
 
 func MockTaskForChannels(id int, failOn int) func() {
