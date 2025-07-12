@@ -3,12 +3,13 @@ package kafka
 import (
 	"context"
 	"fmt"
-	"github.com/confluentinc/confluent-kafka-go/kafka"
 	"go-helloworld/kafka_mock/internal/processor"
 	"log"
 	"log/slog"
 	"sync"
 	"time"
+
+	"github.com/confluentinc/confluent-kafka-go/kafka"
 )
 
 type ConsumerGroupManager struct {
@@ -59,7 +60,7 @@ func NewConsumerGroupManager(
 		if partitionsCount > 0 {
 			consumers, consumerErr := CreateConsumers(logger, ctx, brokers, groupId, topic, processorFunc, partitionsCount)
 			if consumerErr != nil {
-				return nil, fmt.Errorf("failde to create service for topic %s: %w", topic, consumerErr)
+				return nil, fmt.Errorf("failed to create service for topic %s: %w", topic, consumerErr)
 			}
 
 			manager.consumerGroups[topic] = consumers
@@ -93,10 +94,12 @@ func (m *ConsumerGroupManager) CloseAllGroups() {
 }
 
 func (ci *ConsumerInstance) Run() {
+	go ci.retryLoop()
+
 	for {
 		select {
 		case <-ci.ctx.Done():
-			log.Println("Context cancelled: kafka consumer shutting down")
+			ci.logger.Info("Context cancelled: kafka consumer shutting down")
 			return
 		default:
 			ev := ci.consumer.Poll(100)
@@ -114,7 +117,7 @@ func (ci *ConsumerInstance) Run() {
 					ci.processMessage(msg)
 				}()
 			case kafka.Error:
-				log.Printf("Kafka error: %v", msg)
+				ci.logger.Error("kafka error", "code", msg.Code(), "err", msg)
 			}
 		}
 	}

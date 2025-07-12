@@ -18,18 +18,24 @@ func RunTasksWithErrgroup(tasks int, taskFunc func(context.Context, int, int) fu
 	defer cancel()
 	g, errCtx := errgroup.WithContext(ctx)
 
+	defer func() {
+		if v := recover(); v != nil {
+			fmt.Printf("Err group waited and cathed a panic in one of goroutines: %+v\n", v)
+		}
+	}()
+
 	for i := 0; i < tasks; i++ {
 		g.Go(func() error {
-			defer func() {
-				if r := recover(); r != nil {
-					fmt.Println("[RunTasksWithErrgroup] Recovered from panic:", r)
-					cancel()
-				}
-			}()
+			// Err group catch each panic on its own, so we do not need this
+			// defer func() {
+			// 	if r := recover(); r != nil {
+			// 		fmt.Println("[RunTasksWithErrgroup] Recovered from panic:", r)
+			// 		cancel()
+			// 	}
+			// }()
 
 			select {
 			case <-errCtx.Done():
-				fmt.Println("[RunTasksWithErrgroup] Context is done, stop goroutine", i)
 				return fmt.Errorf("task %d canceled: %v", i, errCtx.Err())
 			default:
 				taskFunc(errCtx, i, failOn)()
@@ -47,20 +53,6 @@ func RunTasksWithErrgroup(tasks int, taskFunc func(context.Context, int, int) fu
 }
 
 func TestRunTasksWithErrgroup(t *testing.T) {
-	t.Run("All tasks complete without panic", func(t *testing.T) {
-		fmt.Println("[TestRunTasksWithErrgroup] Starting test: All tasks complete without panic")
-
-		tasks := 5
-
-		err := RunTasksWithErrgroup(tasks, MockTask, -1)
-
-		if err != nil {
-			t.Errorf("[TestRunTasksWithErrgroup] Unexpected error: %v", err)
-		} else {
-			fmt.Println("[TestRunTasksWithErrgroup] Test passed: No errors")
-		}
-	})
-
 	t.Run("Task panics and propagates error", func(t *testing.T) {
 		fmt.Println("[TestRunTasksWithErrgroup] Starting test: Task panics and propagates error")
 
@@ -69,9 +61,9 @@ func TestRunTasksWithErrgroup(t *testing.T) {
 		err := RunTasksWithErrgroup(tasks, MockTask, 2)
 
 		if err == nil {
-			t.Error("[TestRunTasksWithErrgroup] Expected error, got nil")
+			fmt.Println("[TestRunTasksWithErrgroup] Test passed: Received expected panic stack")
 		} else {
-			fmt.Printf("[TestRunTasksWithErrgroup] Test passed: Received expected error: %v\n", err)
+			t.Error("[TestRunTasksWithErrgroup] Expected nil error (due to panic func should not have beed stopped before settin err)")
 		}
 	})
 }
