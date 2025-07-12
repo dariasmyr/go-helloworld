@@ -1,15 +1,28 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	idempotency "go-helloworld/http/basic/handler/user/get"
 	"go-helloworld/http/basic/middleware/httperror"
 	"go-helloworld/http/basic/middleware/recover"
 	"log"
+	"net"
 	"net/http"
+	"os/signal"
 	"strings"
+	"sync/atomic"
+	"syscall"
 	"time"
 )
+
+const (
+	_shutdownPeriod      = 15 * time.Second
+	_shutdownHardPeriod  = 3 * time.Second
+	_readinessDrainDelay = 5 * time.Second
+)
+
+var isShuttingDown atomic.Bool
 
 // helloHandler is a regular function that matches the signature (w http.ResponseWriter, r *http.Request).
 // It will be wrapped into http.HandlerFunc by the multiplexer (or explicitly),
@@ -23,16 +36,23 @@ func helloHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func echoHandler(w http.ResponseWriter, r *http.Request) error {
-	echo := r.URL.Query().Get("echo")
-	if strings.TrimSpace(echo) == "" {
+	select {
+	case <-r.Context().Done():
 		return httperror.NewHTTPError(
-			http.StatusBadRequest,
-			fmt.Errorf("empty echo param"),
+			http.StatusRequestTimeout,
+			fmt.Errorf("request canceled"),
 		)
+	case <-time.After(_readinessDrainDelay):
+		echo := r.URL.Query().Get("echo")
+		if strings.TrimSpace(echo) == "" {
+			return httperror.NewHTTPError(
+				http.StatusBadRequest,
+				fmt.Errorf("empty echo param"),
+			)
+		}
+		fmt.Fprintf(w, "echo %s\n", echo)
+		return nil
 	}
-
-	fmt.Fprintf(w, "echo %s\n", echo)
-	return nil
 }
 
 // userHandler handles requests like /user/123 and extracts the ID from the path.
@@ -67,9 +87,21 @@ func logRequestsMiddleware(next http.Handler) http.Handler {
 }
 
 func main() {
+	rootCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
 	// Create a new HTTP request multiplexer (router).
 	// It matches the incoming request path against the registered routes.
 	mux := http.NewServeMux()
+
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		if isShuttingDown.Load() {
+			http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
+			return
+		}
+
+		fmt.Fprintln(w, "OK")
+	})
 
 	mux.Handle("/echo", recover.RecoverMiddleware(httperror.HTTPErrorMiddleware(echoHandler)))
 
@@ -98,13 +130,45 @@ func main() {
 	staticFilesHandler := http.StripPrefix("/static/", http.FileServer(http.Dir("./public")))
 	mux.Handle("/static/", staticFilesHandler)
 
+	ongoingCtx, stopOngoingCtx := context.WithCancel(context.Background())
+
 	// Create and configure the HTTP server.
 	// We use mux as the root handler — it will receive all requests and dispatch accordingly.
 	server := &http.Server{
 		Addr:    ":8080",
 		Handler: mux,
+		BaseContext: func(net.Listener) context.Context {
+			return ongoingCtx
+		},
 	}
 
-	log.Printf("Server is running on http://localhost%s", server.Addr)
-	log.Fatal(server.ListenAndServe())
+	go func() {
+		log.Printf("Server is running on http://localhost%s", server.Addr)
+		if err := server.ListenAndServe(); err != nil {
+			panic(err)
+		}
+	}()
+
+	// Wait for signal
+	<-rootCtx.Done()
+	stop()
+
+	isShuttingDown.Store(true)
+	log.Println("Received shutdown signal, shutting down.")
+
+	// Wait for readiness check to propagate for handlers to stop
+	time.Sleep(_shutdownHardPeriod)
+	log.Println("Readiness check propagated, now waiting for ongoing requests to finish.")
+
+	shutdownCtx, stopShutdownCtx := context.WithTimeout(context.Background(), _shutdownHardPeriod)
+	defer stopShutdownCtx()
+
+	err := server.Shutdown(shutdownCtx)
+	stopOngoingCtx()
+	if err != nil {
+		log.Println("Failed to wait for ongoing requests to finish, waiting for forced cancellation.")
+		time.Sleep(_shutdownHardPeriod)
+	}
+
+	log.Println("Server shut down gracefully.")
 }
