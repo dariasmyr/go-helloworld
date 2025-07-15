@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	idempotency "go-helloworld/http/basic/handler/user/get"
 	"go-helloworld/http/basic/middleware/httperror"
@@ -135,7 +136,7 @@ func main() {
 	// Create and configure the HTTP server.
 	// We use mux as the root handler — it will receive all requests and dispatch accordingly.
 	server := &http.Server{
-		Addr:    ":8080",
+		Addr:    ":3000",
 		Handler: mux,
 		BaseContext: func(net.Listener) context.Context {
 			return ongoingCtx
@@ -144,7 +145,7 @@ func main() {
 
 	go func() {
 		log.Printf("Server is running on http://localhost%s", server.Addr)
-		if err := server.ListenAndServe(); err != nil {
+		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			panic(err)
 		}
 	}()
@@ -157,10 +158,10 @@ func main() {
 	log.Println("Received shutdown signal, shutting down.")
 
 	// Wait for readiness check to propagate for handlers to stop
-	time.Sleep(_shutdownHardPeriod)
+	time.Sleep(_readinessDrainDelay)
 	log.Println("Readiness check propagated, now waiting for ongoing requests to finish.")
 
-	shutdownCtx, stopShutdownCtx := context.WithTimeout(context.Background(), _shutdownHardPeriod)
+	shutdownCtx, stopShutdownCtx := context.WithTimeout(context.Background(), _shutdownPeriod)
 	defer stopShutdownCtx()
 
 	err := server.Shutdown(shutdownCtx)
