@@ -2,10 +2,46 @@ package sort
 
 import (
 	"fmt"
+	"sync"
 	"testing"
 )
 
-func quickSort(arr []string) []string {
+func concurrentQuickSort(arr []string) []string {
+	if len(arr) <= 1 {
+		return arr
+	}
+	if len(arr) < 1000 {
+		return syncQuickSort(arr) // sync quicksort for small arrays
+	}
+
+	pivot := arr[len(arr)-1]
+	var left, right []string
+	for _, v := range arr[:len(arr)-1] {
+		if v <= pivot {
+			left = append(left, v)
+		} else {
+			right = append(right, v)
+		}
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	var sortedLeft, sortedRight []string
+	go func() {
+		defer wg.Done()
+		sortedLeft = concurrentQuickSort(left)
+	}()
+	go func() {
+		defer wg.Done()
+		sortedRight = concurrentQuickSort(right)
+	}()
+	wg.Wait()
+
+	return append(append(sortedLeft, pivot), sortedRight...)
+}
+
+func syncQuickSort(arr []string) []string {
 	if len(arr) <= 1 {
 		return arr
 	}
@@ -27,8 +63,8 @@ func quickSort(arr []string) []string {
 	fmt.Println("Left", left)
 	fmt.Println("Right", right)
 
-	sortedLeft := quickSort(left)
-	sortedRight := quickSort(right)
+	sortedLeft := syncQuickSort(left)
+	sortedRight := syncQuickSort(right)
 
 	return append(append(sortedLeft, pivot), sortedRight...)
 }
@@ -70,8 +106,11 @@ func TestQuickSort(t *testing.T) {
 	arr := []string{"o", "a", "b", "g", "k"}
 	fmt.Println("Arr", arr)
 
-	qSortedArr := quickSort(arr)
+	qSortedArr := syncQuickSort(arr)
 	fmt.Println("Quick Sort result: ", qSortedArr)
+
+	cSortedArr := concurrentQuickSort(arr)
+	fmt.Println("Concurrent quick sort result: ", cSortedArr)
 
 	mSortedArr := mergeSort(arr)
 	fmt.Println("Merge Sort result: ", mSortedArr)
