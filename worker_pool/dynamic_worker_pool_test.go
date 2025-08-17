@@ -320,14 +320,15 @@ func TestExecutors(t *testing.T) {
 //--- PASS: TestExecutors/Dynamic_pool_with_gradual_submission (0.46s)
 //PASS
 
-// Простая семафорная структура (TryAcquire fast-fail)
+// ----------------------
+// Динамический семафор
+// ----------------------
 type Sem struct {
 	limit int32
 	cur   int32
 }
 
 func NewSem(init int) *Sem { return &Sem{limit: int32(init)} }
-
 func (s *Sem) TryAcquire() bool {
 	for {
 		cur := atomic.LoadInt32(&s.cur)
@@ -345,7 +346,9 @@ func (s *Sem) SetLimit(n int) { atomic.StoreInt32(&s.limit, int32(n)) }
 func (s *Sem) Limit() int     { return int(atomic.LoadInt32(&s.limit)) }
 func (s *Sem) Cur() int       { return int(atomic.LoadInt32(&s.cur)) }
 
-// Простое окно латентностей для расчёта процентилей
+// ----------------------
+// Простое окно и p95
+// ----------------------
 type Window struct {
 	mu   sync.Mutex
 	buf  []float64
@@ -390,17 +393,50 @@ func percentile(xs []float64, p float64) float64 {
 	return xs[idx]
 }
 
+// ----------------------
+// Устойчивый Tuner
+// ----------------------
+func StartTuner(sem *Sem, win *Window, tuneInterval time.Duration, lowP95, highP95 float64, minLimit, maxLimit int) {
+	var smoothedP95 float64
+	alpha := 0.3       // сглаживание
+	hysteresis := 10.0 // мс
+
+	go func() {
+		t := time.NewTicker(tuneInterval)
+		defer t.Stop()
+		for range t.C {
+			snap := win.Snapshot()
+			p95 := percentile(snap, 0.95)
+			if smoothedP95 == 0 {
+				smoothedP95 = p95
+			} else {
+				smoothedP95 = alpha*p95 + (1-alpha)*smoothedP95
+			}
+
+			curLimit := sem.Limit()
+			if smoothedP95 > highP95+hysteresis && curLimit > minLimit {
+				sem.SetLimit(curLimit - 1)
+			} else if smoothedP95 < lowP95-hysteresis && curLimit < maxLimit {
+				sem.SetLimit(curLimit + 1)
+			}
+		}
+	}()
+}
+
+// ----------------------
+// Демонстрация
+// ----------------------
 func TestSem(t *testing.T) {
 	rnd := rand.New(rand.NewSource(time.Now().UnixNano()))
 
-	// Параметры (простые, понятные)
+	// параметры
 	initLimit := 5
-	minLimit := 1
+	minLimit := 2 // не даём упасть до 1
 	maxLimit := 50
 	windowSize := 200
 	tuneInterval := time.Second
-	lowP95 := 80.0   // ms -> если p95 < lowP95, можно увеличить concurrency
-	highP95 := 150.0 // ms -> если p95 > highP95, уменьшаем
+	lowP95 := 80.0   // мс
+	highP95 := 200.0 // мс
 
 	sem := NewSem(initLimit)
 	win := NewWindow(windowSize)
@@ -408,11 +444,10 @@ func TestSem(t *testing.T) {
 	var processed int64
 	var dropped int64
 
-	// Producer: генерирует задачи с заданной скоростью
-	jobRate := 120 // jobs per second; поэкспериментируйте: уменьшите/увеличьте
-	stopAfter := 12 * time.Second
+	jobRate := 120 // jobs/sec
+	stopAfter := 20 * time.Second
 
-	// Tunable: симуляция задач: 80% быстрые (~30-60ms), 20% редкие длинные (~200-400ms)
+	// Producer
 	go func() {
 		t := time.NewTicker(time.Second / time.Duration(jobRate))
 		defer t.Stop()
@@ -423,7 +458,8 @@ func TestSem(t *testing.T) {
 				atomic.AddInt64(&processed, 1)
 				go func() {
 					start := time.Now()
-					if rnd.Intn(100) < 90 {
+					// 80% быстрые, 20% длинные
+					if rnd.Intn(100) < 80 {
 						time.Sleep(time.Millisecond * time.Duration(30+rand.Intn(30)))
 					} else {
 						time.Sleep(time.Millisecond * time.Duration(200+rand.Intn(200)))
@@ -438,23 +474,10 @@ func TestSem(t *testing.T) {
 		}
 	}()
 
-	// Tuner: каждые tuneInterval смотрит p95 и корректирует лимит
-	go func() {
-		t := time.NewTicker(tuneInterval)
-		defer t.Stop()
-		for range t.C {
-			snap := win.Snapshot()
-			p95 := percentile(snap, 0.95)
-			// простая логика: уменьшить на 1 (minLimit) или увеличить на 1 (maxLimit)
-			if p95 > highP95 && sem.Limit() > minLimit {
-				sem.SetLimit(sem.Limit() - 1)
-			} else if p95 < lowP95 && sem.Limit() < maxLimit {
-				sem.SetLimit(sem.Limit() + 1)
-			}
-		}
-	}()
+	// запуск тюнера
+	StartTuner(sem, win, tuneInterval, lowP95, highP95, minLimit, maxLimit)
 
-	// Печать метрик каждую секунду
+	// Метрики
 	printTicker := time.NewTicker(time.Second)
 	defer printTicker.Stop()
 	start := time.Now()
@@ -464,12 +487,15 @@ func TestSem(t *testing.T) {
 		p50 := percentile(snap, 0.50)
 		p95 := percentile(snap, 0.95)
 		p99 := percentile(snap, 0.99)
-		fmt.Printf("t=%.0fs limit=%2d cur=%2d processed=%4d dropped=%4d p50=%.0fms p95=%.0fms p99=%.0fms\n",
-			el, sem.Limit(), sem.Cur(), atomic.LoadInt64(&processed), atomic.LoadInt64(&dropped), p50, p95, p99)
+		fmt.Printf("t=%2.0fs limit=%2d cur=%2d processed=%4d dropped=%4d p50=%3.0fms p95=%3.0fms p99=%3.0fms\n",
+			el, sem.Limit(), sem.Cur(),
+			atomic.LoadInt64(&processed),
+			atomic.LoadInt64(&dropped),
+			p50, p95, p99,
+		)
 		if el >= stopAfter.Seconds()+1 {
 			break
 		}
 	}
-
 	fmt.Println("done")
 }
