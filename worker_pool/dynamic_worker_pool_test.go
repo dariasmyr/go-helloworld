@@ -4,10 +4,12 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"math/rand"
 	"net/http"
 	"runtime"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -187,7 +189,6 @@ func fixedWorkerPool(tasks []TestTask, workers int) {
 	wg.Wait()
 }
 
-// ---- ДИНАМИЧЕСКИЙ ПУЛ ----
 type DynamicWorkerPool struct {
 	jobs        chan TestTask
 	minWorkers  int
@@ -268,7 +269,6 @@ func (p *DynamicWorkerPool) Stop() {
 	p.wg.Wait()
 }
 
-// ---- БЕНЧМАРК ----
 func TestExecutors(t *testing.T) {
 	const numTasks = 200
 	fmt.Println("Num tasks: fibonacci(20) ", numTasks)
@@ -319,3 +319,157 @@ func TestExecutors(t *testing.T) {
 //Dynamic: elapsed=456.418542ms, goroutines=3
 //--- PASS: TestExecutors/Dynamic_pool_with_gradual_submission (0.46s)
 //PASS
+
+// Простая семафорная структура (TryAcquire fast-fail)
+type Sem struct {
+	limit int32
+	cur   int32
+}
+
+func NewSem(init int) *Sem { return &Sem{limit: int32(init)} }
+
+func (s *Sem) TryAcquire() bool {
+	for {
+		cur := atomic.LoadInt32(&s.cur)
+		lim := atomic.LoadInt32(&s.limit)
+		if cur >= lim {
+			return false
+		}
+		if atomic.CompareAndSwapInt32(&s.cur, cur, cur+1) {
+			return true
+		}
+	}
+}
+func (s *Sem) Release()       { atomic.AddInt32(&s.cur, -1) }
+func (s *Sem) SetLimit(n int) { atomic.StoreInt32(&s.limit, int32(n)) }
+func (s *Sem) Limit() int     { return int(atomic.LoadInt32(&s.limit)) }
+func (s *Sem) Cur() int       { return int(atomic.LoadInt32(&s.cur)) }
+
+// Простое окно латентностей для расчёта процентилей
+type Window struct {
+	mu   sync.Mutex
+	buf  []float64
+	pos  int
+	full bool
+}
+
+func NewWindow(n int) *Window { return &Window{buf: make([]float64, n)} }
+func (w *Window) Add(v float64) {
+	w.mu.Lock()
+	w.buf[w.pos] = v
+	w.pos++
+	if w.pos >= len(w.buf) {
+		w.pos = 0
+		w.full = true
+	}
+	w.mu.Unlock()
+}
+func (w *Window) Snapshot() []float64 {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	n := w.pos
+	if w.full {
+		n = len(w.buf)
+	}
+	out := make([]float64, n)
+	copy(out, w.buf[:n])
+	return out
+}
+func percentile(xs []float64, p float64) float64 {
+	if len(xs) == 0 {
+		return 0
+	}
+	sort.Float64s(xs)
+	idx := int(float64(len(xs))*p+0.5) - 1
+	if idx < 0 {
+		idx = 0
+	}
+	if idx >= len(xs) {
+		idx = len(xs) - 1
+	}
+	return xs[idx]
+}
+
+func TestSem(t *testing.T) {
+	rnd := rand.New(rand.NewSource(time.Now().UnixNano()))
+
+	// Параметры (простые, понятные)
+	initLimit := 5
+	minLimit := 1
+	maxLimit := 50
+	windowSize := 200
+	tuneInterval := time.Second
+	lowP95 := 80.0   // ms -> если p95 < lowP95, можно увеличить concurrency
+	highP95 := 150.0 // ms -> если p95 > highP95, уменьшаем
+
+	sem := NewSem(initLimit)
+	win := NewWindow(windowSize)
+
+	var processed int64
+	var dropped int64
+
+	// Producer: генерирует задачи с заданной скоростью
+	jobRate := 120 // jobs per second; поэкспериментируйте: уменьшите/увеличьте
+	stopAfter := 12 * time.Second
+
+	// Tunable: симуляция задач: 80% быстрые (~30-60ms), 20% редкие длинные (~200-400ms)
+	go func() {
+		t := time.NewTicker(time.Second / time.Duration(jobRate))
+		defer t.Stop()
+		end := time.Now().Add(stopAfter)
+		for time.Now().Before(end) {
+			<-t.C
+			if sem.TryAcquire() {
+				atomic.AddInt64(&processed, 1)
+				go func() {
+					start := time.Now()
+					if rnd.Intn(100) < 90 {
+						time.Sleep(time.Millisecond * time.Duration(30+rand.Intn(30)))
+					} else {
+						time.Sleep(time.Millisecond * time.Duration(200+rand.Intn(200)))
+					}
+					lat := float64(time.Since(start).Milliseconds())
+					win.Add(lat)
+					sem.Release()
+				}()
+			} else {
+				atomic.AddInt64(&dropped, 1) // fast-fail rejected
+			}
+		}
+	}()
+
+	// Tuner: каждые tuneInterval смотрит p95 и корректирует лимит
+	go func() {
+		t := time.NewTicker(tuneInterval)
+		defer t.Stop()
+		for range t.C {
+			snap := win.Snapshot()
+			p95 := percentile(snap, 0.95)
+			// простая логика: уменьшить на 1 (minLimit) или увеличить на 1 (maxLimit)
+			if p95 > highP95 && sem.Limit() > minLimit {
+				sem.SetLimit(sem.Limit() - 1)
+			} else if p95 < lowP95 && sem.Limit() < maxLimit {
+				sem.SetLimit(sem.Limit() + 1)
+			}
+		}
+	}()
+
+	// Печать метрик каждую секунду
+	printTicker := time.NewTicker(time.Second)
+	defer printTicker.Stop()
+	start := time.Now()
+	for range printTicker.C {
+		el := time.Since(start).Seconds()
+		snap := win.Snapshot()
+		p50 := percentile(snap, 0.50)
+		p95 := percentile(snap, 0.95)
+		p99 := percentile(snap, 0.99)
+		fmt.Printf("t=%.0fs limit=%2d cur=%2d processed=%4d dropped=%4d p50=%.0fms p95=%.0fms p99=%.0fms\n",
+			el, sem.Limit(), sem.Cur(), atomic.LoadInt64(&processed), atomic.LoadInt64(&dropped), p50, p95, p99)
+		if el >= stopAfter.Seconds()+1 {
+			break
+		}
+	}
+
+	fmt.Println("done")
+}

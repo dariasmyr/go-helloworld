@@ -136,7 +136,7 @@ func main() {
 	// Create and configure the HTTP server.
 	// We use mux as the root handler — it will receive all requests and dispatch accordingly.
 	server := &http.Server{
-		Addr:    ":3000",
+		Addr:    ":8080",
 		Handler: mux,
 		BaseContext: func(net.Listener) context.Context {
 			return ongoingCtx
