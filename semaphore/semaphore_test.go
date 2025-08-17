@@ -100,8 +100,8 @@ func BenchmarkChannelSem(b *testing.B) {
 }
 
 func BenchmarkAtomicSemParams(b *testing.B) {
-	limits := powersOf(4, 1024, 16)             // 8,16,...,1024
-	goroutinesList := powersOf(64, 262_144, 16) // 64,128,...,8192
+	limits := powersOf(8, 1024, 2)          // 8,16,...,1024
+	goroutinesList := powersOf(64, 8192, 2) // 64,128,...,8192
 
 	for _, limit := range limits {
 		for _, goroutines := range goroutinesList {
@@ -129,8 +129,8 @@ func BenchmarkAtomicSemParams(b *testing.B) {
 }
 
 func BenchmarkChannelSemParams(b *testing.B) {
-	limits := powersOf(4, 1024, 16)
-	goroutinesList := powersOf(64, 262_144, 16)
+	limits := powersOf(8, 1024, 2)          // 8,16,...,1024
+	goroutinesList := powersOf(64, 8192, 2) // 64,128,...,8192
 
 	for _, limit := range limits {
 		for _, goroutines := range goroutinesList {
