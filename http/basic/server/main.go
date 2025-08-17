@@ -43,7 +43,7 @@ func echoHandler(w http.ResponseWriter, r *http.Request) error {
 			http.StatusRequestTimeout,
 			fmt.Errorf("request canceled"),
 		)
-	case <-time.After(_readinessDrainDelay):
+	default:
 		echo := r.URL.Query().Get("echo")
 		if strings.TrimSpace(echo) == "" {
 			return httperror.NewHTTPError(
