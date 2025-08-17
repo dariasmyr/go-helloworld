@@ -32,7 +32,12 @@ func (s *Sem) TryAcquire() bool {
 	}
 }
 
-func (s *Sem) Release() { s.cur.Add(-1) }
+func (s *Sem) Release() {
+	cur := s.cur.Add(-1)
+	if cur < 0 {
+		panic("semaphore release without acquire")
+	}
+}
 
 func doWork() int {
 	arr := make([]int, 100)
