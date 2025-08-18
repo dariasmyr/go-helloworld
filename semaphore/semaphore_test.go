@@ -3,9 +3,11 @@ package semaphore
 import (
 	"fmt"
 	"math/rand"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 type Sem struct {
@@ -17,6 +19,66 @@ func NewSem(init int) *Sem {
 	return &Sem{
 		limit: int32(init),
 		cur:   &atomic.Int32{},
+	}
+}
+
+// TryAcquire пытается захватить слот и возвращает true при успехе.
+// Реализация:
+//  1. fast check load -> отказ если уже >= limit
+//  2. optimistic Add(1) — быстрый путь (одна атомарная операция)
+//     если получилось и <= limit -> успех
+//     если превысили -> откат Add(-1)
+//  3. короткий спин-цикл (spinCount итераций) с CAS + небольшая
+//     пауза runtime.Gosched() для снижения горения CPU
+//  4. если spin не дал результата -> exponential backoff (time.Sleep)
+func (s *Sem) OptimizedTryAcquire() bool {
+	// Быстрая проверка: если уже заполнено — сразу отказ
+	if s.cur.Load() >= s.limit {
+		return false
+	}
+
+	// Fast path: один atomic add — обычно это единственная атомарная операция при успехе.
+	if new := s.cur.Add(1); new <= s.limit {
+		return true
+	} else {
+		// overshoot — откат
+		s.cur.Add(-1)
+	}
+
+	// Короткий спин с CAS — уменьшает количество Add/rollback и конкуренцию
+	const spinCount = 302
+	for i := 0; i < spinCount; i++ {
+		cur := s.cur.Load()
+		if cur >= s.limit {
+			return false
+		}
+		if s.cur.CompareAndSwap(cur, cur+1) {
+			return true
+		}
+		// периодически уступаем планировщику — снижает горячую петлю
+		// (не делаем Sleep, чтобы не терять высокопроизводительный fast-path)
+		if (i & 7) == 0 {
+			runtime.Gosched()
+		}
+	}
+
+	// Экспоненциальный backoff
+	backoff := 1 * time.Microsecond
+	const maxBackoff = 50 * time.Millisecond
+	for {
+		// до сна проверяем — возможно место освободилось
+		cur := s.cur.Load()
+		if cur >= s.limit {
+			return false
+		}
+		if s.cur.CompareAndSwap(cur, cur+1) {
+			return true
+		}
+		time.Sleep(backoff)
+		backoff *= 2
+		if backoff > maxBackoff {
+			backoff = maxBackoff
+		}
 	}
 }
 
@@ -74,7 +136,7 @@ func BenchmarkAtomicSem(b *testing.B) {
 			go func() {
 				defer wg.Done()
 				for j := 0; j < 1000; j++ {
-					sem.TryAcquire()
+					sem.OptimizedTryAcquire()
 					doWork()
 					sem.Release()
 				}
@@ -105,8 +167,8 @@ func BenchmarkChannelSem(b *testing.B) {
 }
 
 func BenchmarkAtomicSemParams(b *testing.B) {
-	limits := powersOf(8, 1024, 2)          // 8,16,...,1024
-	goroutinesList := powersOf(64, 8192, 2) // 64,128,...,8192
+	limits := powersOf(8, 4096, 8)
+	goroutinesList := powersOf(64, 32768, 8)
 
 	for _, limit := range limits {
 		for _, goroutines := range goroutinesList {
@@ -119,7 +181,7 @@ func BenchmarkAtomicSemParams(b *testing.B) {
 						go func() {
 							defer wg.Done()
 							for j := 0; j < 1000; j++ {
-								for !sem.TryAcquire() {
+								for !sem.OptimizedTryAcquire() {
 								}
 								doWork()
 								sem.Release()
@@ -134,8 +196,8 @@ func BenchmarkAtomicSemParams(b *testing.B) {
 }
 
 func BenchmarkChannelSemParams(b *testing.B) {
-	limits := powersOf(8, 1024, 2)          // 8,16,...,1024
-	goroutinesList := powersOf(64, 8192, 2) // 64,128,...,8192
+	limits := powersOf(8, 4096, 8)           // 8,16,...,1024
+	goroutinesList := powersOf(64, 32768, 8) // 64,128,...,8192
 
 	for _, limit := range limits {
 		for _, goroutines := range goroutinesList {
