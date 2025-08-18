@@ -111,51 +111,36 @@ func powersOf(min, max, step int) []int {
 	return res
 }
 
-var (
-	limit      = 50
-	goroutines = 200
-)
+func BenchmarkSimpleAtomicSemParams(b *testing.B) {
+	limits := powersOf(8, 4096, 8)
+	goroutinesList := powersOf(64, 32768, 8)
 
-func BenchmarkAtomicSem(b *testing.B) {
-	for b.Loop() {
-		sem := NewSem(limit)
-		var wg sync.WaitGroup
-		wg.Add(goroutines)
-		for g := 0; g < goroutines; g++ {
-			go func() {
-				defer wg.Done()
-				for j := 0; j < 1000; j++ {
-					sem.OptimizedTryAcquire()
-					doWork()
-					sem.Release()
+	for _, limit := range limits {
+		for _, goroutines := range goroutinesList {
+			b.Run(fmt.Sprintf("Atomic/Limit=%d/Goroutines=%d", limit, goroutines), func(b *testing.B) {
+				for b.Loop() {
+					sem := NewSem(limit)
+					var wg sync.WaitGroup
+					wg.Add(goroutines)
+					for g := 0; g < goroutines; g++ {
+						go func() {
+							defer wg.Done()
+							for j := 0; j < 1000; j++ {
+								for !sem.TryAcquire() {
+								}
+								doWork()
+								sem.Release()
+							}
+						}()
+					}
+					wg.Wait()
 				}
-			}()
+			})
 		}
-
-		wg.Wait()
 	}
 }
 
-func BenchmarkChannelSem(b *testing.B) {
-	for b.Loop() {
-		sem := make(chan struct{}, limit)
-		var wg sync.WaitGroup
-		wg.Add(goroutines)
-		for g := 0; g < goroutines; g++ {
-			go func() {
-				defer wg.Done()
-				for j := 0; j < 1000; j++ {
-					sem <- struct{}{}
-					doWork()
-					<-sem
-				}
-			}()
-		}
-		wg.Wait()
-	}
-}
-
-func BenchmarkAtomicSemParams(b *testing.B) {
+func BenchmarkOptimizedAtomicSemParams(b *testing.B) {
 	limits := powersOf(8, 4096, 8)
 	goroutinesList := powersOf(64, 32768, 8)
 
