@@ -25,24 +25,13 @@ func NewSem(init int) *Sem {
 // TryAcquire пытается захватить слот и возвращает true при успехе.
 // Реализация:
 //  1. fast check load -> отказ если уже >= limit
-//  2. optimistic Add(1) — быстрый путь (одна атомарная операция)
-//     если получилось и <= limit -> успех
-//     если превысили -> откат Add(-1)
-//  3. короткий спин-цикл (spinCount итераций) с CAS + небольшая
+//  2. короткий спин-цикл (spinCount итераций) с CAS + небольшая
 //     пауза runtime.Gosched() для снижения горения CPU
-//  4. если spin не дал результата -> exponential backoff (time.Sleep)
+//  3. если spin не дал результата -> exponential backoff (time.Sleep)
 func (s *Sem) OptimizedTryAcquire() bool {
 	// Быстрая проверка: если уже заполнено — сразу отказ
 	if s.cur.Load() >= s.limit {
 		return false
-	}
-
-	// Fast path: один atomic add — обычно это единственная атомарная операция при успехе.
-	if new := s.cur.Add(1); new <= s.limit {
-		return true
-	} else {
-		// overshoot — откат
-		s.cur.Add(-1)
 	}
 
 	// Короткий спин с CAS — уменьшает количество Add/rollback и конкуренцию
