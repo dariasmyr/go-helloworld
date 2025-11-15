@@ -150,6 +150,9 @@ func main() {
 		}
 	}()
 
+	// Uncomment to run a Convey's Game of Life
+	// life.Run()
+
 	// Wait for signal
 	<-rootCtx.Done()
 	stop()
