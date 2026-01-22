@@ -1,8 +1,8 @@
 package bloom
 
 import (
-	"encoding/binary" // для преобразования uint32 -> []byte [web:11]
-	"hash/fnv"        // возьмём FNV-1a как простую хеш-функцию [web:11]
+	"encoding/binary"
+	"hash/fnv"
 )
 
 type BloomFilter struct {
