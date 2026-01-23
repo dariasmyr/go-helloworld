@@ -1,4 +1,4 @@
-package bloom
+package filter
 
 import (
 	"encoding/binary"
@@ -6,7 +6,7 @@ import (
 )
 
 type BloomFilter struct {
-	m         uint64 // number of bytes if bitset
+	m         uint64 // number of bytes in bitset
 	k         uint64 // numbed of hash-funcs
 	bitset    []uint64
 	hashFuncs []func([]byte) uint64
