@@ -12,7 +12,7 @@ type Bucket struct {
 type CuckooFilter struct {
 	buckets    []Bucket // array of buckets
 	bucketSize int      // number of slots per bucket
-	maxKicks   int      // maximum number of evictions during insert
+	maxKicks   int      // max number of evictions during insert
 }
 
 func NewCuckooFilter(bucketCount int, bucketSize int, maxKicks int) *CuckooFilter {
@@ -48,7 +48,6 @@ func (cf *CuckooFilter) index1(key []byte) uint32 {
 }
 
 // index2 computes the alternate bucket index using XOR with fingerprint hash.
-// This property allows deterministic relocation during evictions.
 func (cf *CuckooFilter) index2(i1 uint32, fp uint8) uint32 {
 	h := uint32(fp) * 0x5bd1e995
 	return (i1 ^ h) % uint32(len(cf.buckets))
@@ -64,24 +63,23 @@ func (cf *CuckooFilter) findIndexes(key []byte) (fp uint8, i1, i2 uint32) {
 }
 
 // Contains checks whether a key is probably present in the filter.
-// False means the key is definitely not present.
 func (cf *CuckooFilter) Contains(key []byte) bool {
 	fp, i1, i2 := cf.findIndexes(key)
 
+	// false means the key is "definitely not" present.
 	return cf.buckets[i1].has(fp) || cf.buckets[i2].has(fp)
 }
 
 // Insert attempts to insert a key into the filter.
-// Returns false if insertion fails after maxKicks attempts.
 func (cf *CuckooFilter) Insert(key []byte) bool {
 	fp, i1, i2 := cf.findIndexes(key)
 
-	// Try direct insertion into either bucket
+	// try direct insertion into either bucket
 	if cf.buckets[i1].insert(fp) || cf.buckets[i2].insert(fp) {
 		return true
 	}
 
-	// Start cuckoo eviction process
+	// start cuckoo eviction chain
 	i := i1
 	for n := 0; n < cf.maxKicks; n++ {
 		fp = cf.buckets[i].swapRandom(fp)
@@ -92,7 +90,7 @@ func (cf *CuckooFilter) Insert(key []byte) bool {
 		}
 	}
 
-	// Insert failed
+	// Insert failed (> maxKicks)
 	return false
 }
 
@@ -116,11 +114,11 @@ func (b *Bucket) insert(fp uint8) bool {
 }
 
 // swapRandom randomly evicts one fingerprint and replaces it with new one.
-// Returns the evicted fingerprint.
 func (b *Bucket) swapRandom(fp uint8) uint8 {
 	i := rand.Intn(len(b.slots))
 	old := b.slots[i]
 	b.slots[i] = fp
 
+	// returns the evicted fingerprint.
 	return old
 }
